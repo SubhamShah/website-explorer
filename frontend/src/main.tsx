@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { filterFindings } from './filters'
 import './styles.css'
+import './progress.css'
 
 const API_ORIGIN = 'http://localhost:8100'
 const API = `${API_ORIGIN}/api`
@@ -125,6 +126,7 @@ function App() {
   }
 
   const summary = selected?.summary || {}
+  const scanInProgress = selected?.status === 'queued' || selected?.status === 'running'
   const findings = selected?.findings || []
   const categories = useMemo(() => [...new Set(findings.map((item) => item.category))].sort(), [findings])
   const visibleFindings = useMemo(
@@ -140,6 +142,10 @@ function App() {
       <button className="secondary" onClick={() => void loadScans()}>Refresh scans</button>
     </header>
     {message && <div className="toast" role="status">{message}</div>}
+    {scanInProgress && <div className="progress-banner" role="status" aria-live="polite">
+      <span className="progress-dot" aria-hidden="true" />
+      <div><b>Scan in progress</b><span>Pages and findings refresh automatically until the scan completes.</span></div>
+    </div>}
     <section className="card start-card">
       <h2>Start a website scan</h2>
       <form onSubmit={start}>
@@ -163,7 +169,7 @@ function App() {
       <section className="card results">
         <h2>{selected ? selected.url : 'Scan results'}</h2>
         {!selected ? <p className="muted">Select a scan to view its evidence.</p> : <>
-          {selected.status !== 'completed' && <p className="running">{selected.status === 'failed' ? selected.error : 'Scan in progress… Results refresh every few seconds.'}</p>}
+          {selected.status === 'failed' && <p className="running">{selected.error}</p>}
           <div className="metrics">
             <article><b>{summary.health_score ?? '—'}</b><span>Health score</span></article>
             <article><b>{summary.pages_scanned ?? 0}</b><span>Pages scanned</span></article>

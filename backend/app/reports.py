@@ -1,0 +1,415 @@
+import csv
+import html
+import io
+import textwrap
+import zipfile
+from datetime import datetime
+from xml.sax.saxutils import escape
+
+
+REPORT_KINDS = {"executive", "qa", "developer"}
+
+
+def report_table(scan: dict, kind: str, comparison: dict | None = None) -> tuple[list[str], list[list[object]]]:
+    change_by_fingerprint = {
+        item["fingerprint"]: item["change_status"]
+        for item in (comparison or {}).get("items", [])
+    }
+    if kind == "executive":
+        groups = comparison["items"] if comparison and comparison.get("baseline") else scan.get("issue_groups", [])
+        headers = ["Severity", "Page importance", "Root cause", "Affected pages", "Suggested owner", "Recommended action"]
+        rows = [
+            [
+                group["severity"],
+                group.get("page_priority", "standard"),
+                group["title"],
+                len(group["affected_pages"]),
+                group["owner"],
+                group["recommended_action"],
+            ]
+            for group in groups
+        ]
+    elif kind == "qa":
+        headers = ["Severity", "Page importance", "Category", "Finding", "Page", "Why it matters", "Verification"]
+        rows = [
+            [
+                finding["severity"],
+                finding.get("page_priority", "standard"),
+                finding["category"],
+                finding["title"],
+                finding.get("page_url", ""),
+                finding.get("why_it_matters", ""),
+                finding.get("verification", ""),
+            ]
+            for finding in scan.get("findings", [])
+            if finding["severity"] != "info"
+        ]
+    else:
+        headers = ["Severity", "Page importance", "Category", "Finding", "Page", "Technical evidence", "Recommended action"]
+        rows = [
+            [
+                finding["severity"],
+                finding.get("page_priority", "standard"),
+                finding["category"],
+                finding["title"],
+                finding.get("page_url", ""),
+                finding["detail"],
+                finding.get("recommended_action", ""),
+            ]
+            for finding in scan.get("findings", [])
+        ]
+    if comparison and comparison.get("baseline"):
+        headers.insert(0, "Change")
+        source = (
+            [item.get("change_status", "") for item in comparison["items"]]
+            if kind == "executive"
+            else [change_by_fingerprint.get(finding.get("fingerprint", ""), "") for finding in scan.get("findings", []) if kind == "developer" or finding["severity"] != "info"]
+        )
+        rows = [[source[index] if index < len(source) else "", *row] for index, row in enumerate(rows)]
+    return headers, rows
+
+
+def report_filename(scan: dict, kind: str, extension: str) -> str:
+    host = scan["url"].split("://", 1)[-1].split("/", 1)[0].replace(":", "-")
+    date = scan["created_at"][:10]
+    return f"bugbuster-{kind}-{host}-{date}.{extension}"
+
+
+def build_csv(scan: dict, kind: str, comparison: dict | None = None) -> bytes:
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    headers, rows = report_table(scan, kind, comparison)
+    writer.writerow(headers)
+    writer.writerows(rows)
+    return output.getvalue().encode("utf-8-sig")
+
+
+def _excel_column(index: int) -> str:
+    result = ""
+    while index:
+        index, remainder = divmod(index - 1, 26)
+        result = chr(65 + remainder) + result
+    return result
+
+
+def build_xlsx(scan: dict, kind: str, comparison: dict | None = None) -> bytes:
+    headers, rows = report_table(scan, kind, comparison)
+    all_rows = [headers, *rows]
+    sheet_rows = []
+    for row_index, row in enumerate(all_rows, 1):
+        cells = []
+        for column_index, value in enumerate(row, 1):
+            ref = f"{_excel_column(column_index)}{row_index}"
+            style = ' s="1"' if row_index == 1 else ""
+            cells.append(f'<c r="{ref}" t="inlineStr"{style}><is><t>{escape(str(value))}</t></is></c>')
+        sheet_rows.append(f'<row r="{row_index}">{"".join(cells)}</row>')
+    sheet = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
+<sheetData>{"".join(sheet_rows)}</sheetData><autoFilter ref="A1:{_excel_column(len(headers))}{max(1, len(all_rows))}"/>
+</worksheet>"""
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(
+            "[Content_Types].xml",
+            """<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+<Default Extension="xml" ContentType="application/xml"/>
+<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+</Types>""",
+        )
+        archive.writestr(
+            "_rels/.rels",
+            """<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>""",
+        )
+        archive.writestr(
+            "xl/workbook.xml",
+            """<?xml version="1.0" encoding="UTF-8"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<sheets><sheet name="BugBuster report" sheetId="1" r:id="rId1"/></sheets>
+</workbook>""",
+        )
+        archive.writestr(
+            "xl/_rels/workbook.xml.rels",
+            """<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>""",
+        )
+        archive.writestr(
+            "xl/styles.xml",
+            """<?xml version="1.0" encoding="UTF-8"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+<fonts count="2"><font/><font><b/><color rgb="FFFFFFFF"/></font></fonts>
+<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF187249"/><bgColor indexed="64"/></patternFill></fill></fills>
+<borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs>
+<cellXfs count="2"><xf/><xf fontId="1" fillId="2" applyFont="1" applyFill="1"/></cellXfs>
+</styleSheet>""",
+        )
+        archive.writestr("xl/worksheets/sheet1.xml", sheet)
+    return output.getvalue()
+
+
+def _pdf_escape(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)").encode("latin-1", "replace").decode("latin-1")
+
+
+def _pdf_text_lines(value: object, width: int = 92) -> list[str]:
+    text = " ".join(str(value or "").split())
+    return textwrap.wrap(text, width=width, break_long_words=True, break_on_hyphens=False) or ["Not provided"]
+
+
+def _pdf_field(label: str, value: object) -> list[dict]:
+    return [
+        {"text": label.upper(), "font": "F2", "size": 7, "leading": 9, "color": "muted", "gap": 4},
+        *[
+            {"text": line, "font": "F1", "size": 9, "leading": 11, "color": "body", "gap": 0}
+            for line in _pdf_text_lines(value)
+        ],
+    ]
+
+
+def _pdf_issue_blocks(scan: dict, kind: str, comparison: dict | None) -> list[list[dict]]:
+    blocks: list[list[dict]] = []
+    if kind == "executive":
+        groups = comparison["items"] if comparison and comparison.get("baseline") else scan.get("issue_groups", [])
+        for index, group in enumerate(groups[:1000], 1):
+            pages = group.get("affected_pages", [])
+            page_list = "\n".join(pages[:12])
+            if len(pages) > 12:
+                page_list += f"\n...and {len(pages) - 12} more affected pages"
+            status = group.get("change_status")
+            summary = (
+                f"{group.get('severity', 'unknown').upper()} severity  -  "
+                f"{group.get('page_priority', 'standard').replace('_', ' ').title()} page importance  -  "
+                f"{len(pages)} affected {'page' if len(pages) == 1 else 'pages'}"
+            )
+            if status:
+                summary = f"{status.upper()}  -  {summary}"
+            blocks.append(
+                [
+                    {"text": f"ROOT CAUSE {index}", "font": "F2", "size": 7, "leading": 9, "color": "brand", "gap": 12},
+                    {"text": group.get("title", "Untitled issue"), "font": "F2", "size": 12, "leading": 15, "color": "body", "gap": 2},
+                    {"text": summary, "font": "F1", "size": 8, "leading": 11, "color": "muted", "gap": 2},
+                    *_pdf_field("What happened", group.get("what_happened") or group.get("sample_detail")),
+                    *_pdf_field("Why it matters", group.get("why_it_matters")),
+                    *_pdf_field("Suggested owner", group.get("owner")),
+                    *_pdf_field("Recommended action", group.get("recommended_action")),
+                    *_pdf_field("Affected pages", page_list),
+                    {"divider": True, "leading": 9, "gap": 6},
+                ]
+            )
+    else:
+        findings = [
+            item
+            for item in scan.get("findings", [])
+            if kind == "developer" or item.get("severity") != "info"
+        ]
+        change_by_fingerprint = {
+            item["fingerprint"]: item["change_status"]
+            for item in (comparison or {}).get("items", [])
+        }
+        for index, finding in enumerate(findings[:1000], 1):
+            change = change_by_fingerprint.get(finding.get("fingerprint", ""))
+            summary_parts = [
+                finding.get("severity", "unknown").upper(),
+                finding.get("page_priority", "standard").replace("_", " ").title(),
+                finding.get("category", "other").title(),
+            ]
+            if change:
+                summary_parts.insert(0, change.upper())
+            block = [
+                {"text": f"{'QA FINDING' if kind == 'qa' else 'EVIDENCE'} {index}", "font": "F2", "size": 7, "leading": 9, "color": "brand", "gap": 12},
+                {"text": finding.get("title", "Untitled finding"), "font": "F2", "size": 12, "leading": 15, "color": "body", "gap": 2},
+                {"text": "  -  ".join(summary_parts), "font": "F1", "size": 8, "leading": 11, "color": "muted", "gap": 2},
+                *_pdf_field("Affected page", finding.get("page_url")),
+                *_pdf_field("What happened" if kind == "qa" else "Technical evidence", finding.get("detail")),
+            ]
+            if kind == "qa":
+                block.extend(_pdf_field("Why it matters", finding.get("why_it_matters")))
+                block.extend(_pdf_field("How it was verified", finding.get("verification")))
+            block.extend(_pdf_field("Recommended action", finding.get("recommended_action")))
+            block.append({"divider": True, "leading": 9, "gap": 6})
+            blocks.append(block)
+    return blocks
+
+
+def build_pdf(scan: dict, kind: str, comparison: dict | None = None) -> bytes:
+    title = scan.get("report_title") or f"{kind.title()} website report"
+    agency = scan.get("agency_name") or "BugBuster Website Explorer"
+    summary = scan.get("summary", {})
+    intro = [
+        {"text": agency, "font": "F2", "size": 9, "leading": 12, "color": "brand", "gap": 0},
+        {"text": title, "font": "F2", "size": 20, "leading": 24, "color": "body", "gap": 5},
+        {"text": scan["url"], "font": "F1", "size": 9, "leading": 12, "color": "muted", "gap": 1},
+        {"text": f"Scan completed: {scan['created_at']}", "font": "F1", "size": 8, "leading": 11, "color": "muted", "gap": 0},
+        {"divider": True, "leading": 12, "gap": 9},
+        {"text": "SCAN SUMMARY", "font": "F2", "size": 8, "leading": 11, "color": "brand", "gap": 2},
+        {
+            "text": (
+                f"Health score: {summary.get('health_score', '-')}/100    "
+                f"Pages scanned: {summary.get('pages_scanned', 0)}    "
+                f"Root causes: {len(scan.get('issue_groups', []))}    "
+                f"Actionable request failures: {summary.get('actionable_failed_requests', summary.get('failed_requests', 0))}"
+            ),
+            "font": "F2",
+            "size": 10,
+            "leading": 14,
+            "color": "body",
+            "gap": 2,
+        },
+    ]
+    blocks = [intro]
+    if comparison and comparison.get("baseline"):
+        counts = comparison["counts"]
+        blocks.append(
+            [
+                {"text": "SCAN COMPARISON", "font": "F2", "size": 8, "leading": 11, "color": "brand", "gap": 12},
+                {"text": f"Compared with scan from {comparison['baseline']['created_at']}", "font": "F1", "size": 9, "leading": 12, "color": "muted", "gap": 1},
+                {
+                    "text": f"New: {counts['new']}    Fixed: {counts['fixed']}    Recurring: {counts['recurring']}    Unchanged: {counts['unchanged']}",
+                    "font": "F2",
+                    "size": 10,
+                    "leading": 14,
+                    "color": "body",
+                    "gap": 2,
+                },
+            ]
+        )
+    blocks.append(
+        [
+            {
+                "text": "PRIORITIZED ROOT CAUSES" if kind == "executive" else ("QA FINDINGS" if kind == "qa" else "DEVELOPER EVIDENCE"),
+                "font": "F2",
+                "size": 14,
+                "leading": 18,
+                "color": "body",
+                "gap": 18,
+            }
+        ]
+    )
+    issue_blocks = _pdf_issue_blocks(scan, kind, comparison)
+    blocks.extend(issue_blocks or [[{"text": "No findings were recorded for this report.", "font": "F1", "size": 10, "leading": 14, "color": "muted", "gap": 8}]])
+
+    pages: list[list[dict]] = [[]]
+    remaining_height = 682
+    for block in blocks:
+        block_height = sum(item.get("leading", 11) + item.get("gap", 0) for item in block)
+        if pages[-1] and block_height > remaining_height:
+            pages.append([])
+            remaining_height = 682
+        pages[-1].extend(block)
+        remaining_height -= block_height
+
+    brand = scan.get("brand_color") or "#187249"
+    try:
+        brand_rgb = tuple(int(brand[index:index + 2], 16) / 255 for index in (1, 3, 5))
+    except (TypeError, ValueError):
+        brand_rgb = (0.094, 0.447, 0.286)
+    colors = {
+        "brand": brand_rgb,
+        "body": (0.09, 0.21, 0.16),
+        "muted": (0.36, 0.45, 0.41),
+    }
+    objects: list[bytes] = [
+        b"",
+        b"",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
+    ]
+    page_ids = []
+    for page_number, page_lines in enumerate(pages, 1):
+        page_id = len(objects) + 1
+        content_id = page_id + 1
+        page_ids.append(page_id)
+        content_lines = [
+            f"{brand_rgb[0]:.3f} {brand_rgb[1]:.3f} {brand_rgb[2]:.3f} rg",
+            "42 770 528 4 re f",
+        ]
+        y = 748
+        if page_number > 1:
+            content_lines.extend(
+                [
+                    "BT /F2 8 Tf",
+                    f"{brand_rgb[0]:.3f} {brand_rgb[1]:.3f} {brand_rgb[2]:.3f} rg",
+                    f"42 748 Td ({_pdf_escape(title + ' - continued')}) Tj ET",
+                ]
+            )
+            y = 724
+        for line in page_lines:
+            y -= line.get("gap", 0)
+            if line.get("divider"):
+                content_lines.extend(["0.84 0.89 0.86 RG", f"42 {y:.1f} m 570 {y:.1f} l S"])
+                y -= line.get("leading", 9)
+                continue
+            red, green, blue = colors[line.get("color", "body")]
+            content_lines.extend(
+                [
+                    f"BT /{line.get('font', 'F1')} {line.get('size', 9)} Tf",
+                    f"{red:.3f} {green:.3f} {blue:.3f} rg",
+                    f"42 {y:.1f} Td ({_pdf_escape(str(line.get('text', '')))}) Tj ET",
+                ]
+            )
+            y -= line.get("leading", 11)
+        content_lines.extend(
+            [
+                "BT /F1 8 Tf 0.36 0.45 0.41 rg",
+                f"42 28 Td (Read-only BugBuster report) Tj ET",
+                f"BT /F1 8 Tf 0.36 0.45 0.41 rg 535 28 Td (Page {page_number} of {len(pages)}) Tj ET",
+            ]
+        )
+        content = "\n".join(content_lines).encode("latin-1")
+        objects.append(f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents {content_id} 0 R >>".encode())
+        objects.append(b"<< /Length " + str(len(content)).encode() + b" >>\nstream\n" + content + b"\nendstream")
+    objects[0] = b"<< /Type /Catalog /Pages 2 0 R >>"
+    objects[1] = f"<< /Type /Pages /Kids [{' '.join(f'{page_id} 0 R' for page_id in page_ids)}] /Count {len(page_ids)} >>".encode()
+    output = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for object_id, body in enumerate(objects, 1):
+        offsets.append(len(output))
+        output.extend(f"{object_id} 0 obj\n".encode() + body + b"\nendobj\n")
+    xref = len(output)
+    output.extend(f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode())
+    for offset in offsets[1:]:
+        output.extend(f"{offset:010d} 00000 n \n".encode())
+    output.extend(f"trailer << /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF".encode())
+    return bytes(output)
+
+
+def build_html(scan: dict, kind: str, comparison: dict | None = None) -> str:
+    headers, rows = report_table(scan, kind, comparison)
+    brand = scan.get("brand_color") or "#187249"
+    agency = html.escape(scan.get("agency_name") or "BugBuster Website Explorer")
+    title = html.escape(scan.get("report_title") or f"{kind.title()} website report")
+    summary = scan.get("summary", {})
+    comparison_html = ""
+    if comparison and comparison.get("baseline"):
+        counts = comparison["counts"]
+        comparison_html = f"""<section><h2>Changes since the previous scan</h2><div class="metrics">
+<b>{counts['new']}<small>New</small></b><b>{counts['fixed']}<small>Fixed</small></b>
+<b>{counts['recurring']}<small>Recurring</small></b><b>{counts['unchanged']}<small>Unchanged</small></b></div></section>"""
+    table_header = "".join(f"<th>{html.escape(header)}</th>" for header in headers)
+    table_rows = "".join(
+        "<tr>" + "".join(f"<td>{html.escape(str(value))}</td>" for value in row) + "</tr>"
+        for row in rows
+    )
+    return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="robots" content="noindex,nofollow">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title><style>
+:root{{--brand:{brand}}}body{{font:14px system-ui;color:#17352a;margin:0;background:#f5f8f6}}main{{max-width:1120px;margin:32px auto;padding:28px;background:white;border-radius:16px}}
+header{{border-bottom:4px solid var(--brand);padding-bottom:18px}}h1{{margin:5px 0}}p,small{{color:#60766b}}.metrics{{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}}
+.metrics b{{padding:16px;background:#f0f7f3;border-radius:10px;font-size:26px}}.metrics small{{display:block;font-size:11px;text-transform:uppercase}}
+table{{width:100%;border-collapse:collapse;margin-top:14px;font-size:12px}}th{{background:var(--brand);color:white;text-align:left}}th,td{{padding:9px;border:1px solid #dce7e0;vertical-align:top}}
+@media(max-width:700px){{main{{margin:0;border-radius:0;padding:16px}}.metrics{{grid-template-columns:repeat(2,1fr)}}table{{display:block;overflow:auto}}}}</style></head>
+<body><main><header><small>{agency}</small><h1>{title}</h1><p>{html.escape(scan['url'])} · {html.escape(scan['created_at'])}</p></header>
+<section><h2>Scan summary</h2><div class="metrics"><b>{summary.get('health_score', '-')}<small>Health score</small></b>
+<b>{summary.get('pages_scanned', 0)}<small>Pages scanned</small></b><b>{len(scan.get('issue_groups', []))}<small>Root causes</small></b>
+<b>{summary.get('actionable_failed_requests', summary.get('failed_requests', 0))}<small>Request failures</small></b></div></section>
+{comparison_html}<section><h2>{kind.title()} findings</h2><table><thead><tr>{table_header}</tr></thead><tbody>{table_rows}</tbody></table></section>
+<p><small>Generated {datetime.now().astimezone().isoformat(timespec='seconds')} · Read-only BugBuster report</small></p></main></body></html>"""

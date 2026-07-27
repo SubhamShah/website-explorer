@@ -1,0 +1,114 @@
+import tempfile
+import unittest
+from pathlib import Path
+
+from app import store
+from app.main import (
+    PagePriorityRequest,
+    ReportSettingsRequest,
+    ShareReportRequest,
+    download_report,
+    report_comparison,
+    share_report,
+    shared_report,
+    update_page_priority,
+    update_report_settings,
+)
+
+
+class FakeRequest:
+    def url_for(self, _name: str, **parameters: str) -> str:
+        return f"http://test/reports/shared/{parameters['token']}"
+
+
+class ReportApiTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.original_db_path = store.DB_PATH
+        self.temp_dir = tempfile.TemporaryDirectory()
+        store.DB_PATH = Path(self.temp_dir.name) / "test-explorer.db"
+        self.scan = store.create_scan("https://example.com", 2, 1)
+        store.save_page(
+            self.scan["id"],
+            {
+                "url": "https://example.com/checkout",
+                "final_url": "https://example.com/checkout",
+                "depth": 1,
+                "status": 500,
+                "title": "Checkout",
+                "h1": "Checkout",
+                "meta_description": "",
+                "load_ms": 100,
+                "screenshot_path": None,
+                "error_type": None,
+                "error_detail": None,
+                "redirect_chain": [],
+                "console": [],
+                "network": [],
+                "links": [],
+            },
+        )
+        store.save_finding(
+            self.scan["id"],
+            {
+                "page_url": "https://example.com/checkout",
+                "severity": "high",
+                "category": "page",
+                "title": "Page could not be loaded",
+                "detail": "The page returned status 500.",
+            },
+        )
+
+    def tearDown(self) -> None:
+        store.DB_PATH = self.original_db_path
+        self.temp_dir.cleanup()
+
+    def test_priority_branding_download_and_shared_report(self) -> None:
+        priority = update_page_priority(
+            self.scan["id"],
+            PagePriorityRequest(page_url="https://example.com/checkout", priority="critical"),
+        )
+        branding = update_report_settings(
+            self.scan["id"],
+            ReportSettingsRequest(
+                agency_name="Quality Agency",
+                report_title="Release report",
+                brand_color="#123456",
+            ),
+        )
+        pdf = download_report(
+            self.scan["id"],
+            "pdf",
+            kind="executive",
+            compare_to=None,
+        )
+        shared = share_report(
+            self.scan["id"],
+            ShareReportRequest(report_kind="executive", expires_hours=24),
+            FakeRequest(),
+        )
+        public = shared_report(shared["url"].rsplit("/", 1)[-1])
+
+        self.assertEqual(priority["priority"], "critical")
+        self.assertEqual(branding["agency_name"], "Quality Agency")
+        self.assertEqual(pdf.media_type, "application/pdf")
+        self.assertTrue(bytes(pdf.body).startswith(b"%PDF"))
+        self.assertTrue(shared["read_only"])
+        self.assertEqual(public.status_code, 200)
+        self.assertIn(b"Quality Agency", public.body)
+        self.assertIn(b"noindex,nofollow", public.body)
+
+    def test_report_comparison_is_explicit_and_current_only_is_default(self) -> None:
+        scan = {
+            "comparison": {
+                "baseline": {"id": "older"},
+                "counts": {"new": 1, "fixed": 0, "recurring": 0, "unchanged": 0},
+                "items": [],
+            }
+        }
+
+        self.assertIsNone(report_comparison(scan, None))
+        self.assertEqual(report_comparison(scan, "__previous__"), scan["comparison"])
+
+
+if __name__ == "__main__":
+    unittest.main()

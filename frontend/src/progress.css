@@ -23,6 +23,15 @@
   font-size: 13px;
 }
 
+.progress-count {
+  margin-left: auto;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: #d6efdf;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
 .progress-dot {
   width: 10px;
   height: 10px;
@@ -43,5 +52,17 @@
 @media (prefers-reduced-motion: reduce) {
   .progress-dot {
     animation: none;
+  }
+}
+
+@media (max-width: 620px) {
+  .progress-banner {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .progress-count {
+    width: 100%;
+    margin-left: 22px;
   }
 }

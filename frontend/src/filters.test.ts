@@ -16,4 +16,9 @@ describe('filterFindings', () => {
     expect(filterFindings(findings, 'all', 'all', 'MISSING')).toEqual(findings)
     expect(filterFindings(findings, 'all', 'all', '/about')).toEqual([findings[1]])
   })
+
+  it('hides informational network activity in the issues view', () => {
+    const informational = { severity: 'info', category: 'network', title: 'API request passed', detail: '200 OK' }
+    expect(filterFindings([...findings, informational], 'issues', 'all', '')).toEqual(findings)
+  })
 })

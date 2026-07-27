@@ -1,0 +1,77 @@
+[2m11:32:49 PM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m [31m[Unhandled rejection] [1mTypeError[22m: Failed to fetch
+[39m > window.fetch chrome-extension:/ndbldppnjghijmhlnmojaehjnookbain/page-observer.js:28:34
+ > openScan src/main.tsx:251:27
+    249 |  
+    250 |    const openScan = async (id: string) => {
+    251 |      const response = await fetch(`${API}/scans/${id}`, { cache: 'no-store' })
+        |                             ^
+    252 |      if (response.ok) {
+    253 |        const scan: Scan = await response.json()
+ > src/main.tsx:263:80
+
+[2m11:33:00 PM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m [31m[Unhandled rejection] [1mTypeError[22m: Failed to fetch
+[39m > window.fetch chrome-extension:/ndbldppnjghijmhlnmojaehjnookbain/page-observer.js:28:34
+ > openScan src/main.tsx:251:27
+    249 |  
+    250 |    const openScan = async (id: string) => {
+    251 |      const response = await fetch(`${API}/scans/${id}`, { cache: 'no-store' })
+        |                             ^
+    252 |      if (response.ok) {
+    253 |        const scan: Scan = await response.json()
+ > src/main.tsx:263:80
+
+[2m11:33:08 PM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m [31m[Unhandled rejection] [1mTypeError[22m: Failed to fetch
+[39m > window.fetch chrome-extension:/ndbldppnjghijmhlnmojaehjnookbain/page-observer.js:28:34
+ > openScan src/main.tsx:251:27
+    249 |  
+    250 |    const openScan = async (id: string) => {
+    251 |      const response = await fetch(`${API}/scans/${id}`, { cache: 'no-store' })
+        |                             ^
+    252 |      if (response.ok) {
+    253 |        const scan: Scan = await response.json()
+ > src/main.tsx:263:80
+
+[2m11:33:23 PM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m [31m[Unhandled rejection] [1mTypeError[22m: Failed to fetch
+[39m > window.fetch chrome-extension:/ndbldppnjghijmhlnmojaehjnookbain/page-observer.js:28:34
+ > openScan src/main.tsx:251:27
+    249 |  
+    250 |    const openScan = async (id: string) => {
+    251 |      const response = await fetch(`${API}/scans/${id}`, { cache: 'no-store' })
+        |                             ^
+    252 |      if (response.ok) {
+    253 |        const scan: Scan = await response.json()
+ > src/main.tsx:263:80
+
+[2m11:33:31 PM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m [31m[Unhandled rejection] [1mTypeError[22m: Failed to fetch
+[39m > window.fetch chrome-extension:/ndbldppnjghijmhlnmojaehjnookbain/page-observer.js:28:34
+ > openScan src/main.tsx:251:27
+    249 |  
+    250 |    const openScan = async (id: string) => {
+    251 |      const response = await fetch(`${API}/scans/${id}`, { cache: 'no-store' })
+        |                             ^
+    252 |      if (response.ok) {
+    253 |        const scan: Scan = await response.json()
+ > src/main.tsx:263:80
+
+[2m11:33:31 PM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m [31m[Unhandled rejection] [1mTypeError[22m: Failed to fetch
+[39m > window.fetch chrome-extension:/ndbldppnjghijmhlnmojaehjnookbain/page-observer.js:28:34
+ > openScan src/main.tsx:251:27
+    249 |  
+    250 |    const openScan = async (id: string) => {
+    251 |      const response = await fetch(`${API}/scans/${id}`, { cache: 'no-store' })
+        |                             ^
+    252 |      if (response.ok) {
+    253 |        const scan: Scan = await response.json()
+ > src/main.tsx:263:80
+
+[2m11:33:50 PM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m [31m[Unhandled rejection] [1mTypeError[22m: Failed to fetch
+[39m > window.fetch chrome-extension:/ndbldppnjghijmhlnmojaehjnookbain/page-observer.js:28:34
+ > openScan src/main.tsx:251:27
+    249 |  
+    250 |    const openScan = async (id: string) => {
+    251 |      const response = await fetch(`${API}/scans/${id}`, { cache: 'no-store' })
+        |                             ^
+    252 |      if (response.ok) {
+    253 |        const scan: Scan = await response.json()
+ > src/main.tsx:263:80
+

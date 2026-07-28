@@ -224,7 +224,7 @@ def get_report_share(token: str) -> dict | None:
 
 
 def save_finding(scan_id: str, finding: dict) -> None:
-    metadata = finding_metadata(finding)
+    metadata = {**finding_metadata(finding), **(finding.get("metadata") or {})}
     with connection() as conn:
         conn.execute(
             """INSERT INTO findings(
@@ -453,6 +453,10 @@ def delete_scan(scan_id: str) -> tuple[bool, list[str]]:
             "SELECT screenshot_path, responsive_json FROM pages WHERE scan_id=?",
             (scan_id,),
         ).fetchall()
+        finding_rows = conn.execute(
+            "SELECT metadata_json FROM findings WHERE scan_id=?",
+            (scan_id,),
+        ).fetchall()
         conn.execute("DELETE FROM findings WHERE scan_id=?", (scan_id,))
         conn.execute("DELETE FROM pages WHERE scan_id=?", (scan_id,))
         conn.execute("DELETE FROM scans WHERE id=?", (scan_id,))
@@ -466,6 +470,10 @@ def delete_scan(scan_id: str) -> tuple[bool, list[str]]:
             for viewport in responsive.values()
             if viewport.get("screenshot_path")
         )
+    for row in finding_rows:
+        metadata = json.loads(row["metadata_json"] or "{}")
+        if metadata.get("element_screenshot_path"):
+            screenshots.append(metadata["element_screenshot_path"])
     return True, sorted(set(screenshots))
 
 

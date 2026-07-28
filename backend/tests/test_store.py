@@ -43,7 +43,14 @@ class DeleteScanTests(unittest.TestCase):
         )
         store.save_finding(
             scan["id"],
-            {"page_url": scan["url"], "severity": "low", "category": "seo", "title": "Test", "detail": "Test"},
+            {
+                "page_url": scan["url"],
+                "severity": "low",
+                "category": "accessibility",
+                "title": "Test",
+                "detail": "Test",
+                "metadata": {"element_screenshot_path": "scan-page-a11y-1.png"},
+            },
         )
 
         deleted, screenshots = store.delete_scan(scan["id"])
@@ -51,7 +58,7 @@ class DeleteScanTests(unittest.TestCase):
         self.assertTrue(deleted)
         self.assertEqual(
             screenshots,
-            ["scan-page-desktop.png", "scan-page-mobile.png", "scan-page.png"],
+            ["scan-page-a11y-1.png", "scan-page-desktop.png", "scan-page-mobile.png", "scan-page.png"],
         )
         self.assertIsNone(store.get_scan(scan["id"]))
         with store.connection() as conn:
@@ -102,6 +109,34 @@ class DeleteScanTests(unittest.TestCase):
             details["findings"][0]["discovered_on"],
             ["https://example.com/another-source", "https://example.com/source"],
         )
+
+    def test_accessibility_and_template_metadata_are_persistent(self) -> None:
+        scan = store.create_scan("https://example.com", 1, 0)
+        store.save_finding(
+            scan["id"],
+            {
+                "page_url": "https://example.com",
+                "severity": "high",
+                "category": "accessibility",
+                "title": "Accessibility: Buttons must have discernible text",
+                "detail": "The menu button has no accessible name.",
+                "metadata": {
+                    "axe_rule_id": "button-name",
+                    "wcag_criteria": ["4.1.2"],
+                    "wcag_level": "Level A",
+                    "affected_element": "header button.menu",
+                    "dom_evidence": '<button class="menu"></button>',
+                    "template_label": "Homepage layout",
+                },
+            },
+        )
+
+        finding = store.findings_page(scan["id"])["items"][0]
+
+        self.assertEqual(finding["axe_rule_id"], "button-name")
+        self.assertEqual(finding["wcag_criteria"], ["4.1.2"])
+        self.assertEqual(finding["affected_element"], "header button.menu")
+        self.assertEqual(finding["template_label"], "Homepage layout")
 
     def test_overview_and_paginated_results_do_not_repeat_heavy_page_evidence(self) -> None:
         scan = store.create_scan("https://example.com", 3, 1)

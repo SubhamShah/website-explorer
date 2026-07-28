@@ -66,12 +66,22 @@ def finding_fingerprint(finding: dict) -> str:
     category = finding.get("category", "other").lower()
     title = re.sub(r"\s+", " ", finding.get("title", "").strip().lower())
     signature = f"{category}|{title}"
+    explicit_metadata = finding.get("metadata") or finding
     if category == "network":
         signature += f"|{_network_classification(finding)}|{_stable_url(_request_url(finding))}"
     elif category == "console":
         message = re.sub(r"https?://\S+", ":url", finding.get("detail", "").lower())
         message = re.sub(r"\b\d{3,}\b", ":number", message)
         signature += f"|{re.sub(r'\\s+', ' ', message)[:180]}"
+    elif category == "accessibility":
+        rule_id = str(explicit_metadata.get("axe_rule_id", title))
+        component = explicit_metadata.get("component_hint")
+        selector = re.sub(
+            r"(?:#[-\w]+|:nth-(?:child|of-type)\(\d+\))",
+            ":element",
+            str(explicit_metadata.get("affected_element", "")).lower(),
+        )
+        signature = f"{category}|{rule_id}|{component or selector[:160]}"
     return hashlib.sha1(signature.encode("utf-8")).hexdigest()[:16]
 
 
@@ -187,6 +197,12 @@ def finding_metadata(finding: dict) -> dict:
         else:
             why_it_matters = "Primary content may be unavailable to users at this screen size."
             action = "Review the responsive CSS and ensure the primary heading and main content remain visible."
+    elif category == "accessibility":
+        confidence = "confirmed"
+        verification = "Detected automatically by axe-core against the rendered DOM; manual accessibility testing is still required."
+        owner = "Accessibility / Frontend developer"
+        why_it_matters = "People using assistive technology may be unable to understand or operate the affected element."
+        action = "Inspect the captured element and DOM evidence, apply the axe-core recommendation, and verify with keyboard and assistive-technology testing."
     elif category == "content":
         confidence = "confirmed"
         verification = "Confirmed from the rendered page content and same-domain link evidence captured by the scan."
@@ -280,6 +296,20 @@ def build_issue_groups(findings: list[dict]) -> list[dict]:
                 "recommended_action": finding["recommended_action"],
                 "severity_reason": finding["severity_reason"],
                 "page_priority": finding.get("page_priority", "standard"),
+                "plain_problem": finding.get("plain_problem"),
+                "plain_fix": finding.get("plain_fix"),
+                "example_page_url": finding.get("page_url"),
+                "example_element_label": finding.get("element_label"),
+                "example_page_section": finding.get("page_section"),
+                "example_affected_element": finding.get("affected_element"),
+                "example_dom_evidence": finding.get("dom_evidence"),
+                "example_element_screenshot_path": finding.get("element_screenshot_path"),
+                "help_url": finding.get("help_url"),
+                "axe_rule_id": finding.get("axe_rule_id"),
+                "wcag_criteria": finding.get("wcag_criteria"),
+                "wcag_level": finding.get("wcag_level"),
+                "_template_pages": {},
+                "_component_pages": {},
             },
         )
         group["count"] += 1
@@ -288,12 +318,58 @@ def build_issue_groups(findings: list[dict]) -> list[dict]:
         page_url = finding.get("page_url")
         if page_url and page_url not in group["affected_pages"]:
             group["affected_pages"].append(page_url)
+        template_label = finding.get("template_label")
+        if template_label and page_url:
+            structure_signature = finding.get("structure_signature") or "url-family"
+            cluster_key = f"{template_label}|{structure_signature}"
+            cluster = group["_template_pages"].setdefault(
+                cluster_key,
+                {
+                    "label": template_label,
+                    "pages": set(),
+                    "dom_match": structure_signature != "url-family",
+                },
+            )
+            cluster["pages"].add(page_url)
+        component = finding.get("component_hint")
+        if component and page_url:
+            group["_component_pages"].setdefault(component, set()).add(page_url)
         if SEVERITY_RANK.get(finding["severity"], 0) > SEVERITY_RANK.get(group["severity"], 0):
             group["severity"] = finding["severity"]
         if PRIORITY_RANK.get(finding.get("page_priority", "standard"), 1) > PRIORITY_RANK.get(group["page_priority"], 1):
             group["page_priority"] = finding["page_priority"]
     for group in grouped.values():
         group["affected_pages"].sort()
+        shared_candidates = [
+            ("component", label, pages, True)
+            for label, pages in group.pop("_component_pages").items()
+            if len(pages) >= 2
+        ]
+        shared_candidates.extend(
+            ("template", cluster["label"], cluster["pages"], cluster["dom_match"])
+            for cluster in group.pop("_template_pages").values()
+            if len(cluster["pages"]) >= 2
+        )
+        if shared_candidates:
+            kind, label, pages, structural_match = max(
+                shared_candidates,
+                key=lambda item: len(item[2]),
+            )
+            confidence = (
+                "high"
+                if structural_match and len(pages) == len(group["affected_pages"])
+                else "medium"
+            )
+            group["shared_origin"] = {
+                "kind": kind,
+                "label": label,
+                "confidence": confidence,
+                "affected_page_count": len(pages),
+            }
+            group["recommended_action"] = (
+                f"Fix this once in the likely {label}, then verify all {len(pages)} affected pages. "
+                f"{group['recommended_action']}"
+            )
     return sorted(
         grouped.values(),
         key=lambda item: (

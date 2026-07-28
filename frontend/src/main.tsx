@@ -91,6 +91,19 @@ type PageQuality = {
   placeholder_matches?: string[]
   images_missing_alt?: string[]
   images_missing_alt_count?: number
+  template?: {
+    template_id?: string
+    template_label?: string
+    template_confidence?: string
+    structure_signature?: string
+  }
+  accessibility?: {
+    engine?: string
+    violation_count?: number
+    affected_element_count?: number
+    omitted_element_count?: number
+    element_screenshot_count?: number
+  }
 }
 type Finding = {
   id: string
@@ -108,6 +121,25 @@ type Finding = {
   why_it_matters?: string
   recommended_action?: string
   severity_reason?: string
+  engine?: string
+  axe_rule_id?: string
+  axe_impact?: string
+  wcag_criteria?: string[]
+  wcag_level?: string
+  affected_element?: string
+  dom_evidence?: string
+  failure_summary?: string
+  help_url?: string
+  screenshot_path?: string
+  element_screenshot_path?: string
+  element_label?: string
+  page_section?: string
+  bounding_box?: { x: number; y: number; width: number; height: number }
+  plain_problem?: string
+  plain_fix?: string
+  component_hint?: string
+  template_label?: string
+  template_confidence?: string
 }
 type IssueGroup = {
   group_id: string
@@ -126,6 +158,24 @@ type IssueGroup = {
   recommended_action: string
   severity_reason: string
   page_priority: 'critical' | 'high_value' | 'standard'
+  shared_origin?: {
+    kind: 'template' | 'component'
+    label: string
+    confidence: 'high' | 'medium'
+    affected_page_count: number
+  }
+  plain_problem?: string
+  plain_fix?: string
+  example_page_url?: string
+  example_element_label?: string
+  example_page_section?: string
+  example_affected_element?: string
+  example_dom_evidence?: string
+  example_element_screenshot_path?: string
+  help_url?: string
+  axe_rule_id?: string
+  wcag_criteria?: string[]
+  wcag_level?: string
   change_status?: 'new' | 'fixed' | 'recurring' | 'unchanged'
 }
 type ScanComparison = {
@@ -179,6 +229,7 @@ type Summary = {
   rate_limit_ms?: number
   responsive_viewports?: number
   responsive_issues?: number
+  accessibility_issues?: number
   content_issues?: number
   indexing_issues?: number
   sitemap_urls?: number
@@ -686,6 +737,7 @@ function App() {
             <article><b>{summary.network_requests ?? 0}</b><span>Network requests</span></article>
             <article><b>{summary.actionable_failed_requests ?? summary.failed_requests ?? 0}</b><span>Actionable failures</span></article>
             <article><b>{summary.responsive_issues ?? 0}</b><span>Responsive issues</span></article>
+            <article><b>{summary.accessibility_issues ?? 0}</b><span>Accessibility issues</span></article>
           </div>
           {summary.health_breakdown && <details className="score-explainer">
             <summary>How this health score is calculated</summary>
@@ -956,16 +1008,40 @@ function IssueGroupCard({ group }: { group: IssueGroup }) {
         <div><b>{group.title}</b><small>{group.category} · {group.count} occurrences across {group.affected_pages.length} {group.affected_pages.length === 1 ? 'page' : 'pages'}</small></div>
         <div className="issue-markers"><span className={`page-priority ${group.page_priority}`}>{group.page_priority.replace(/_/g, ' ')}</span><span className={`confidence ${group.confidence}`}>{group.confidence.replace(/_/g, ' ')}</span></div>
       </div>
-      <p>{group.what_happened}</p>
+      {group.shared_origin && <div className="shared-origin">
+        <div><span>{group.shared_origin.kind === 'component' ? 'Shared component' : 'Shared template'}</span><b>{group.shared_origin.label}</b></div>
+        <p>One developer change may resolve this on {group.shared_origin.affected_page_count} pages. Detection confidence: {group.shared_origin.confidence}.</p>
+      </div>}
+      {group.category === 'accessibility'
+        ? <AccessibilityQuickLocator
+            problem={group.plain_problem || accessibilityProblem(group.axe_rule_id, group.title)}
+            impact={group.why_it_matters}
+            fix={group.plain_fix || accessibilityFix(group.axe_rule_id)}
+            pageUrl={group.example_page_url}
+            elementLabel={group.example_element_label}
+            pageSection={group.example_page_section}
+            elementScreenshotPath={group.example_element_screenshot_path}
+          />
+        : <p>{group.what_happened}</p>}
       <div className="ownership"><span>Suggested owner</span><b>{group.owner}</b></div>
       <details className="remediation">
-        <summary>View impact, fix guidance, and affected pages</summary>
+        <summary>{group.category === 'accessibility' ? 'Affected pages and developer details' : 'View impact, fix guidance, and affected pages'}</summary>
         <div className="guidance-grid">
           <div><b>Why it matters</b><p>{group.why_it_matters}</p></div>
           <div><b>Recommended action</b><p>{group.recommended_action}</p></div>
           <div><b>How it was verified</b><p>{group.verification}</p></div>
           <div><b>Why this severity</b><p>{group.severity_reason}</p></div>
         </div>
+        {group.category === 'accessibility' && <AccessibilityTechnicalEvidence
+          engine="axe-core"
+          ruleId={group.axe_rule_id}
+          criteria={group.wcag_criteria}
+          level={group.wcag_level}
+          selector={group.example_affected_element}
+          domEvidence={group.example_dom_evidence}
+          helpUrl={group.help_url}
+          pageScreenshotPath={group.example_element_screenshot_path}
+        />}
         <AffectedPages urls={group.affected_pages} />
       </details>
     </div>
@@ -980,9 +1056,10 @@ function FindingCard({ finding }: { finding: Finding }) {
         <b>{finding.title}</b>
         {finding.confidence && <span className={`confidence ${finding.confidence}`}>{finding.confidence.replace(/_/g, ' ')}</span>}
       </div>
-      <p>{finding.detail}</p>
+      {finding.category !== 'accessibility' && <p>{finding.detail}</p>}
       <small>{finding.category} - {finding.page_url}</small>
-      {(finding.why_it_matters || finding.recommended_action) && <details className="remediation compact">
+      {finding.category === 'accessibility' && <AccessibilityFindingEvidence finding={finding} />}
+      {finding.category !== 'accessibility' && (finding.why_it_matters || finding.recommended_action) && <details className="remediation compact">
         <summary>Understand and resolve</summary>
         <div className="guidance-grid">
           {finding.why_it_matters && <div><b>Why it matters</b><p>{finding.why_it_matters}</p></div>}
@@ -1010,7 +1087,8 @@ function PageEvidence({ page, findings, panelId }: { page: Page; findings: Findi
   const networkItems = page.network || []
   const redirects = page.redirect_chain || []
   const responsiveFindings = findings.filter((finding) => finding.category === 'responsive')
-  const generalFindings = findings.filter((finding) => finding.category !== 'responsive')
+  const accessibilityFindings = findings.filter((finding) => finding.category === 'accessibility')
+  const generalFindings = findings.filter((finding) => !['responsive', 'accessibility'].includes(finding.category))
   return <section className="inline-evidence" id={panelId} aria-label={`Evidence for ${page.url}`}>
     {page.error_detail && <p className="error-box">{page.error_detail}</p>}
     <dl>
@@ -1020,6 +1098,11 @@ function PageEvidence({ page, findings, panelId }: { page: Page; findings: Findi
       <div><dt>Meta description</dt><dd>{page.meta_description || 'Missing'}</dd></div>
     </dl>
     <ContentEvidence quality={page.quality || {}} />
+    <AccessibilityEvidence
+      summary={page.quality?.accessibility}
+      findings={accessibilityFindings}
+      screenshotPath={page.screenshot_path}
+    />
     <ResponsiveEvidence evidence={page.responsive || {}} findings={responsiveFindings} />
     {redirects.length > 0 && <EvidenceList title={`Redirects (${redirects.length})`} items={redirects.map((item) => `${item.status} ${item.from} -> ${item.to}`)} />}
     <EvidenceList title={`General findings (${generalFindings.length})`} items={generalFindings.map((item) => `${item.severity.toUpperCase()}: ${item.title} - ${item.detail}`)} />
@@ -1030,6 +1113,231 @@ function PageEvidence({ page, findings, panelId }: { page: Page; findings: Findi
     })} />
     <NetworkEvidence items={networkItems} />
     {page.screenshot_path && <a className="screenshot" href={`${API_ORIGIN}/evidence/${page.screenshot_path}`} target="_blank" rel="noreferrer">Open full-page screenshot</a>}
+  </section>
+}
+
+function AccessibilityFindingEvidence({ finding }: { finding: Finding }) {
+  return <div className="accessibility-finding-evidence">
+    <AccessibilityQuickLocator
+      problem={finding.plain_problem || accessibilityProblem(finding.axe_rule_id, finding.title)}
+      impact={finding.why_it_matters}
+      fix={finding.plain_fix || accessibilityFix(finding.axe_rule_id)}
+      pageUrl={finding.page_url}
+      elementLabel={finding.element_label}
+      pageSection={finding.page_section}
+      elementScreenshotPath={finding.element_screenshot_path}
+    />
+    <details className="accessibility-technical">
+      <summary>Developer details: selector, DOM, and WCAG rule</summary>
+    <div className="accessibility-rule">
+      <span className="engine-label">{finding.engine || 'axe-core'}</span>
+      <AccessibilityRuleDisclosure ruleId={finding.axe_rule_id} title={finding.title} />
+      <small>{finding.wcag_criteria?.length ? `WCAG ${finding.wcag_criteria.join(', ')} · ${finding.wcag_level}` : finding.wcag_level || 'Best practice'}</small>
+    </div>
+    {finding.affected_element && <div><b>Affected element</b><code>{finding.affected_element}</code></div>}
+    {finding.dom_evidence && <div><b>DOM evidence</b><code>{finding.dom_evidence}</code></div>}
+    <div className="accessibility-links">
+      {finding.help_url && <a href={finding.help_url} target="_blank" rel="noreferrer">Open axe-core rule guidance</a>}
+      {finding.screenshot_path && <a href={`${API_ORIGIN}/evidence/${finding.screenshot_path}`} target="_blank" rel="noreferrer">Open page screenshot</a>}
+    </div>
+    {finding.failure_summary && <div><b>Raw axe explanation</b><code>{finding.failure_summary}</code></div>}
+    </details>
+  </div>
+}
+
+function accessibilityProblem(ruleId?: string, title?: string) {
+  const problems: Record<string, string> = {
+    'button-name': 'This button has no name that a screen reader can announce.',
+    'color-contrast': 'This text does not have enough contrast against its background.',
+    'document-title': 'This page does not have a useful browser-tab title.',
+    'html-has-lang': 'The page does not identify its main language.',
+    'image-alt': 'This image has no text alternative describing its meaning.',
+    'input-button-name': 'This form control has no name that a screen reader can announce.',
+    label: 'This form field does not have a clear label.',
+    'link-name': 'This link has no meaningful name or link text.',
+    region: 'This content is not contained in a clearly named page region.',
+  }
+  return problems[ruleId || ''] || `This element failed the “${(title || 'accessibility rule').replace(/^Accessibility:\s*/, '')}” check.`
+}
+
+function accessibilityFix(ruleId?: string) {
+  const fixes: Record<string, string> = {
+    'button-name': 'Give the button visible text or a short aria-label that describes its action.',
+    'color-contrast': 'Use a darker text color or lighter background until the text meets the required contrast ratio.',
+    'document-title': 'Add a short, unique page title.',
+    'html-has-lang': 'Add the correct language to the html element, such as lang="en".',
+    'image-alt': 'Add a short, meaningful alt description; use an empty alt only when the image is decorative.',
+    'input-button-name': 'Add visible text, a value, or an aria-label that clearly describes this control.',
+    label: 'Add a visible label connected to this field, or add a clear aria-label.',
+    'link-name': 'Give the link meaningful visible text or an aria-label that explains where it goes.',
+    region: 'Place this content inside an appropriate landmark such as main, nav, header, or footer.',
+  }
+  return fixes[ruleId || ''] || 'Review this element and apply the linked axe-core rule guidance.'
+}
+
+function accessibilityRuleExample(ruleId?: string) {
+  const examples: Record<string, { before: string; after: string }> = {
+    'button-name': {
+      before: '<button><svg aria-hidden="true">...</svg></button>',
+      after: '<button aria-label="Submit answer"><svg aria-hidden="true">...</svg></button>',
+    },
+    'image-alt': {
+      before: '<img src="team-photo.jpg">',
+      after: '<img src="team-photo.jpg" alt="Customer support team">',
+    },
+    label: {
+      before: '<input id="email" type="email">',
+      after: '<label for="email">Email address</label><input id="email" type="email">',
+    },
+    'link-name': {
+      before: '<a href="/pricing"><svg>...</svg></a>',
+      after: '<a href="/pricing" aria-label="View pricing"><svg aria-hidden="true">...</svg></a>',
+    },
+  }
+  return examples[ruleId || '']
+}
+
+function AccessibilityRuleDisclosure({ ruleId, title }: { ruleId?: string; title?: string }) {
+  const name = ruleId || 'accessibility-rule'
+  const example = accessibilityRuleExample(ruleId)
+  return <details className="rule-disclosure">
+    <summary>{name}</summary>
+    <div className="rule-explanation">
+      <div><span>What this rule checks</span><p>{accessibilityProblem(ruleId, title)}</p></div>
+      <div><span>Recommended fix</span><p>{accessibilityFix(ruleId)}</p></div>
+      {example && <div className="rule-code-example">
+        <span>Code example</span>
+        <div><small>Before</small><code>{example.before}</code></div>
+        <div><small>After</small><code>{example.after}</code></div>
+      </div>}
+    </div>
+  </details>
+}
+
+function AccessibilityQuickLocator({
+  problem,
+  impact,
+  fix,
+  pageUrl,
+  elementLabel,
+  pageSection,
+  elementScreenshotPath,
+}: {
+  problem?: string
+  impact?: string
+  fix?: string
+  pageUrl?: string
+  elementLabel?: string
+  pageSection?: string
+  elementScreenshotPath?: string
+}) {
+  return <section className="accessibility-quick-locator" aria-label="Quick accessibility issue locator">
+    <div className="quick-locator-heading">
+      <div><span>Quick answer</span><b>What to fix and where to find it</b></div>
+      {pageUrl && <a href={pageUrl} target="_blank" rel="noreferrer">Open live page</a>}
+    </div>
+    <div className="quick-locator-content">
+      {elementScreenshotPath && <a className="element-preview" href={`${API_ORIGIN}/evidence/${elementScreenshotPath}`} target="_blank" rel="noreferrer">
+        <img src={`${API_ORIGIN}/evidence/${elementScreenshotPath}`} alt={`Affected webpage element${elementLabel ? `: ${elementLabel}` : ''}`} loading="lazy" />
+        <span>Open exact element image</span>
+      </a>}
+      <div className="quick-locator-facts">
+        <div><span>Exact problem</span><b>{problem || 'This element failed an automated accessibility rule.'}</b></div>
+        <div><span>Where it is</span><b>{pageSection || 'Page area'} <i>→</i> {elementLabel || 'See the selector in developer details'}</b></div>
+        {impact && <div><span>Who is affected</span><p>{impact}</p></div>}
+        <div className="fastest-fix"><span>Fastest fix</span><p>{fix || 'Review the affected element and apply the linked accessibility guidance.'}</p></div>
+      </div>
+    </div>
+  </section>
+}
+
+function AccessibilityTechnicalEvidence({
+  engine,
+  ruleId,
+  criteria,
+  level,
+  selector,
+  domEvidence,
+  helpUrl,
+  pageScreenshotPath,
+}: {
+  engine?: string
+  ruleId?: string
+  criteria?: string[]
+  level?: string
+  selector?: string
+  domEvidence?: string
+  helpUrl?: string
+  pageScreenshotPath?: string
+}) {
+  return <details className="accessibility-technical">
+    <summary>Developer details: selector, DOM, and WCAG rule</summary>
+    <div className="accessibility-rule">
+      <span className="engine-label">{engine || 'axe-core'}</span>
+      <AccessibilityRuleDisclosure ruleId={ruleId} />
+      <small>{criteria?.length ? `WCAG ${criteria.join(', ')} · ${level}` : level || 'Best practice'}</small>
+    </div>
+    {selector && <div><b>CSS selector</b><code>{selector}</code></div>}
+    {domEvidence && <div><b>DOM evidence</b><code>{domEvidence}</code></div>}
+    <div className="accessibility-links">
+      {helpUrl && <a href={helpUrl} target="_blank" rel="noreferrer">Open axe-core rule guidance</a>}
+      {pageScreenshotPath && <a href={`${API_ORIGIN}/evidence/${pageScreenshotPath}`} target="_blank" rel="noreferrer">Open screenshot evidence</a>}
+    </div>
+  </details>
+}
+
+function AccessibilityEvidence({
+  summary,
+  findings,
+  screenshotPath,
+}: {
+  summary?: PageQuality['accessibility']
+  findings: Finding[]
+  screenshotPath?: string
+}) {
+  if (!summary && !findings.length) return null
+  return <section className="accessibility-evidence">
+    <div className="evidence-title">
+      <b>Accessibility testing</b>
+      <span>{summary?.engine || 'axe-core'} · automated WCAG checks</span>
+    </div>
+    <div className="accessibility-summary">
+      <div><b>{summary?.violation_count ?? new Set(findings.map((finding) => finding.axe_rule_id)).size}</b><span>Rules violated</span></div>
+      <div><b>{summary?.affected_element_count ?? findings.length}</b><span>Affected elements</span></div>
+      <div><b>{summary?.omitted_element_count ?? 0}</b><span>Additional elements omitted</span></div>
+    </div>
+    {findings.length
+      ? <div className="accessibility-page-findings">{findings.map((finding) =>
+          <article key={finding.id}>
+            <span className={`badge ${finding.severity}`}>{finding.severity}</span>
+            <div>
+              <b>{finding.title.replace(/^Accessibility:\s*/, '')}</b>
+              <small>{finding.axe_rule_id} · {finding.wcag_criteria?.length ? `WCAG ${finding.wcag_criteria.join(', ')}` : 'Best practice'} · {finding.wcag_level}</small>
+              <AccessibilityQuickLocator
+                problem={finding.plain_problem || accessibilityProblem(finding.axe_rule_id, finding.title)}
+                impact={finding.why_it_matters}
+                fix={finding.plain_fix || accessibilityFix(finding.axe_rule_id)}
+                pageUrl={finding.page_url}
+                elementLabel={finding.element_label}
+                pageSection={finding.page_section}
+                elementScreenshotPath={finding.element_screenshot_path}
+              />
+              <AccessibilityTechnicalEvidence
+                engine={finding.engine}
+                ruleId={finding.axe_rule_id}
+                criteria={finding.wcag_criteria}
+                level={finding.wcag_level}
+                selector={finding.affected_element}
+                domEvidence={finding.dom_evidence}
+                helpUrl={finding.help_url}
+                pageScreenshotPath={finding.screenshot_path}
+              />
+            </div>
+          </article>,
+        )}</div>
+      : <p className="muted">No automated accessibility violations were recorded for this page.</p>}
+    <p className="automation-note">Automated checks cannot detect every accessibility problem. Keyboard, screen-reader, zoom, and task-flow testing still require human review.</p>
+    {screenshotPath && <a className="screenshot" href={`${API_ORIGIN}/evidence/${screenshotPath}`} target="_blank" rel="noreferrer">Open accessibility screenshot context</a>}
   </section>
 }
 
@@ -1047,6 +1355,7 @@ function ContentEvidence({ quality }: { quality: PageQuality }) {
       <div><b>Canonical</b><span>{quality.canonical_urls?.length ? quality.canonical_urls.join(', ') : 'No canonical tag found'}</span></div>
       <div><b>Robots directives</b><span>{quality.robots_directives?.length ? quality.robots_directives.join(', ') : 'No page-level directives'}</span></div>
       {quality.placeholder_matches?.length ? <div><b>Placeholder text</b><span>{quality.placeholder_matches.join(', ')}</span></div> : null}
+      {quality.template?.template_label ? <div><b>Likely template</b><span>{quality.template.template_label} · {quality.template.template_confidence} confidence</span></div> : null}
     </div>
   </section>
 }

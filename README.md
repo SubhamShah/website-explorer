@@ -68,6 +68,8 @@ npm run build
 - Create read-only HTML report links that expire after 24 hours, 7 days, or 30 days. A link is publicly reachable only when the backend itself is hosted on a public HTTPS address.
 - Render every successfully loaded page at Desktop (1440×900), Tablet (768×1024), and Mobile (390×844) sizes and retain a full-page screenshot for each viewport.
 - Detect responsive horizontal overflow, hidden primary content, overlapping interactive elements, text below 12px, navigation that disappears without a menu control, and images extending outside the viewport.
+- Run established axe-core accessibility checks and retain the WCAG criteria and level, affected selector, DOM snippet, screenshot context, plain-language impact, and recommended repair.
+- Recognize likely shared page templates and global components, then turn repeated symptoms into one developer task with affected-page count and confidence.
 
 ## Responsive testing
 
@@ -83,6 +85,33 @@ The checks are diagnostic rather than visual guesses:
 - Off-screen image detection reports visible images crossing the horizontal viewport boundary.
 
 Responsive findings do not currently change the health score. They are prioritized using severity and the page’s Critical, High value, or Standard importance.
+
+## Accessibility testing
+
+Each successfully rendered page is inspected using the established `axe-core` engine through `axe-playwright-python`. The scanner runs automated WCAG 2.0, 2.1, and 2.2 Level A/AA checks plus axe best-practice rules. Accessibility findings include:
+
+- axe rule identifier, impact, WCAG criteria, and conformance level.
+- The affected CSS selector and a bounded DOM snippet.
+- The desktop screenshot as visual context when available.
+- A quick locator for nontechnical users: the exact problem, nearby page section, readable element name, affected-user impact, and shortest recommended fix.
+- A cropped image of the affected element when its axe selector can be replayed; selector, DOM, raw axe output, and WCAG data remain collapsed under developer details.
+- Plain-language user impact, recommended action, verification method, and official axe rule guidance.
+- Affected-page grouping in the root-cause view and accessibility evidence inside each expanded page.
+
+The crawler retains at most 30 affected elements per rule on a page and reports how many additional elements were omitted, preventing extremely repetitive pages from creating unbounded results. Automated testing does not replace keyboard, screen-reader, zoom, and end-to-end task testing.
+
+After pulling this feature, install the updated backend dependency before restarting:
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+## Template and component intelligence
+
+The crawler records a bounded structural signature from rendered landmarks such as the header, navigation, main content, article, forms, and footer. URL families identify likely blog articles, blog categories, products, services, news, and other repeated detail-page layouts.
+
+When the same root cause appears on at least two pages with the same structural template signature, the grouped finding identifies the likely shared template. Accessibility selectors that point to a repeated header, navigation, footer, or consent control are identified as likely shared components. The dashboard presents a **fix once, verify all affected pages** task with High or Medium inference confidence; it does not claim to know a source-code filename without repository integration.
 
 ## Sitemap, indexing, and content quality
 

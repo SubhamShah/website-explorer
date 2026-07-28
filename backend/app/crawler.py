@@ -12,6 +12,7 @@ from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import async_playwright
 
 from . import store
+from .accessibility import load_axe_source, run_accessibility_scan
 from .quality import (
     DEFAULT_CONTENT_CHECKS,
     PLACEHOLDER_PATTERN,
@@ -20,6 +21,7 @@ from .quality import (
     page_content_findings,
 )
 from .responsive import capture_responsive_evidence, responsive_findings
+from .templates import attach_template_metadata, template_metadata
 
 SCREENSHOTS = Path(__file__).resolve().parents[1] / "data" / "screenshots"
 USER_AGENT = "BugBusterWebsiteExplorer/0.2"
@@ -391,6 +393,19 @@ async def scan_website(
     page_records: list[dict] = []
     site_analysis: dict = {}
     findings: list[dict] = []
+    axe_source = None
+    try:
+        axe_source = load_axe_source()
+    except RuntimeError as accessibility_error:
+        findings.append(
+            {
+                "page_url": normalized_root,
+                "severity": "low",
+                "category": "accessibility",
+                "title": "Accessibility engine unavailable",
+                "detail": str(accessibility_error),
+            }
+        )
     try:
         async with async_playwright() as playwright:
             browser = await playwright.chromium.launch(headless=True)
@@ -558,6 +573,16 @@ async def scan_website(
                                     try { return new URL(href, document.baseURI).href; }
                                     catch { return null; }
                                 }).filter(Boolean),
+                                template_tokens: [...document.querySelectorAll(
+                                    'header,nav,main,main>*,article,aside,footer,form'
+                                )].slice(0, 100).map(node => {
+                                    const classes = [...node.classList]
+                                        .filter(value => value.length < 50)
+                                        .slice(0, 4)
+                                        .sort()
+                                        .join('.');
+                                    return `${node.tagName.toLowerCase()}${node.getAttribute('role') ? `[${node.getAttribute('role')}]` : ''}${classes ? `.${classes}` : ''}`;
+                                }),
                             })"""
                         )
                         title = page_data["title"]
@@ -592,6 +617,10 @@ async def scan_website(
                             ),
                             "images_missing_alt": page_data.get("images_missing_alt", []),
                             "images_missing_alt_count": page_data.get("images_missing_alt_count", 0),
+                            "template": template_metadata(
+                                url,
+                                page_data.get("template_tokens", []),
+                            ),
                         }
                         try:
                             responsive = await capture_responsive_evidence(
@@ -611,6 +640,33 @@ async def scan_website(
                                     "detail": f"Viewport evidence could not be completed: {str(responsive_error)[:240]}",
                                 }
                             )
+                        if status < 400 and axe_source:
+                            try:
+                                await page.set_viewport_size({"width": 1440, "height": 900})
+                                await page.wait_for_timeout(100)
+                                accessibility_results, accessibility_summary = await run_accessibility_scan(
+                                    page,
+                                    url,
+                                    axe_source,
+                                    screenshot_path,
+                                    SCREENSHOTS,
+                                    f"{scan_id}-{page_count + 1}",
+                                )
+                                findings.extend(accessibility_results)
+                                quality["accessibility"] = accessibility_summary
+                            except Exception as accessibility_error:
+                                findings.append(
+                                    {
+                                        "page_url": url,
+                                        "severity": "low",
+                                        "category": "accessibility",
+                                        "title": "Accessibility scan incomplete",
+                                        "detail": (
+                                            "axe-core could not complete this page: "
+                                            f"{str(accessibility_error)[:240]}"
+                                        ),
+                                    }
+                                )
                 except PlaywrightTimeoutError:
                     timeout_count += 1
                     error_type = "timeout"
@@ -731,6 +787,11 @@ async def scan_website(
                         "health_breakdown": live_breakdown,
                         "responsive_viewports": responsive_viewport_count,
                         "responsive_issues": sum(item.get("category") == "responsive" for item in findings),
+                        "accessibility_issues": sum(
+                            item.get("category") == "accessibility"
+                            and item.get("severity") != "info"
+                            for item in findings
+                        ),
                         "retried_pages": retried_page_count,
                         "recovered_pages": recovered_page_count,
                         "robots_policy": policy.status,
@@ -749,6 +810,7 @@ async def scan_website(
                 normalized_root,
             )
             findings.extend(quality_findings)
+            attach_template_metadata(findings, page_records)
             store.update_scan(scan_id, site_analysis=site_analysis)
             await browser.close()
 
@@ -786,6 +848,11 @@ async def scan_website(
                 "health_breakdown": health_breakdown,
                 "responsive_viewports": responsive_viewport_count,
                 "responsive_issues": sum(item.get("category") == "responsive" for item in findings),
+                "accessibility_issues": sum(
+                    item.get("category") == "accessibility"
+                    and item.get("severity") != "info"
+                    for item in findings
+                ),
                 "content_issues": sum(item.get("category") == "content" for item in findings),
                 "indexing_issues": sum(
                     item.get("category") == "indexing" and item.get("severity") != "info"

@@ -10,6 +10,14 @@ from xml.sax.saxutils import escape
 REPORT_KINDS = {"executive", "qa", "developer"}
 
 
+def _accessibility_standard(finding: dict) -> str:
+    if finding.get("category") != "accessibility":
+        return ""
+    criteria = finding.get("wcag_criteria") or []
+    standard = f"WCAG {', '.join(criteria)}" if criteria else "Best practice"
+    return f"{finding.get('axe_rule_id', 'axe-core rule')} | {standard} | {finding.get('wcag_level', '')}".strip(" |")
+
+
 def report_table(scan: dict, kind: str, comparison: dict | None = None) -> tuple[list[str], list[list[object]]]:
     change_by_fingerprint = {
         item["fingerprint"]: item["change_status"]
@@ -30,13 +38,15 @@ def report_table(scan: dict, kind: str, comparison: dict | None = None) -> tuple
             for group in groups
         ]
     elif kind == "qa":
-        headers = ["Severity", "Page importance", "Category", "Finding", "Page", "Why it matters", "Verification"]
+        headers = ["Severity", "Page importance", "Category", "Finding", "Standard / rule", "Affected element", "Page", "Why it matters", "Verification"]
         rows = [
             [
                 finding["severity"],
                 finding.get("page_priority", "standard"),
                 finding["category"],
                 finding["title"],
+                _accessibility_standard(finding),
+                finding.get("affected_element", ""),
                 finding.get("page_url", ""),
                 finding.get("why_it_matters", ""),
                 finding.get("verification", ""),
@@ -45,15 +55,19 @@ def report_table(scan: dict, kind: str, comparison: dict | None = None) -> tuple
             if finding["severity"] != "info"
         ]
     else:
-        headers = ["Severity", "Page importance", "Category", "Finding", "Page", "Technical evidence", "Recommended action"]
+        headers = ["Severity", "Page importance", "Category", "Finding", "Standard / rule", "Affected element", "Page", "Technical evidence", "DOM evidence", "Screenshot evidence", "Recommended action"]
         rows = [
             [
                 finding["severity"],
                 finding.get("page_priority", "standard"),
                 finding["category"],
                 finding["title"],
+                _accessibility_standard(finding),
+                finding.get("affected_element", ""),
                 finding.get("page_url", ""),
                 finding["detail"],
+                finding.get("dom_evidence", ""),
+                finding.get("screenshot_path", ""),
                 finding.get("recommended_action", ""),
             ]
             for finding in scan.get("findings", [])
@@ -202,6 +216,14 @@ def _pdf_issue_blocks(scan: dict, kind: str, comparison: dict | None) -> list[li
                     *_pdf_field("Why it matters", group.get("why_it_matters")),
                     *_pdf_field("Suggested owner", group.get("owner")),
                     *_pdf_field("Recommended action", group.get("recommended_action")),
+                    *(
+                        _pdf_field(
+                            "Likely shared origin",
+                            f"{group['shared_origin']['label']} ({group['shared_origin']['confidence']} confidence)",
+                        )
+                        if group.get("shared_origin")
+                        else []
+                    ),
                     *_pdf_field("Affected pages", page_list),
                     {"divider": True, "leading": 9, "gap": 6},
                 ]
@@ -232,6 +254,12 @@ def _pdf_issue_blocks(scan: dict, kind: str, comparison: dict | None) -> list[li
                 *_pdf_field("Affected page", finding.get("page_url")),
                 *_pdf_field("What happened" if kind == "qa" else "Technical evidence", finding.get("detail")),
             ]
+            if finding.get("category") == "accessibility":
+                block.extend(_pdf_field("WCAG / axe-core rule", _accessibility_standard(finding)))
+                block.extend(_pdf_field("Affected element", finding.get("affected_element")))
+                if kind == "developer":
+                    block.extend(_pdf_field("DOM evidence", finding.get("dom_evidence")))
+                    block.extend(_pdf_field("Screenshot evidence", finding.get("screenshot_path")))
             if kind == "qa":
                 block.extend(_pdf_field("Why it matters", finding.get("why_it_matters")))
                 block.extend(_pdf_field("How it was verified", finding.get("verification")))

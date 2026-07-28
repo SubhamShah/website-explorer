@@ -1,4 +1,5 @@
 import io
+import csv
 import unittest
 import zipfile
 
@@ -70,6 +71,31 @@ class ReportExportTests(unittest.TestCase):
             self.assertIn("xl/workbook.xml", workbook.namelist())
             self.assertIn("xl/worksheets/sheet1.xml", workbook.namelist())
             self.assertIn(b"Technical evidence", workbook.read("xl/worksheets/sheet1.xml"))
+
+    def test_accessibility_evidence_is_in_qa_and_developer_exports(self) -> None:
+        scan = sample_scan()
+        scan["findings"] = [
+            {
+                **scan["findings"][0],
+                "category": "accessibility",
+                "title": "Accessibility: Form elements must have labels",
+                "axe_rule_id": "label",
+                "wcag_criteria": ["1.3.1", "4.1.2"],
+                "wcag_level": "Level A",
+                "affected_element": "form input#email",
+                "dom_evidence": '<input id="email">',
+                "screenshot_path": "scan-desktop.png",
+            }
+        ]
+
+        qa = build_csv(scan, "qa").decode("utf-8-sig")
+        developer = build_csv(scan, "developer").decode("utf-8-sig")
+
+        self.assertIn("WCAG 1.3.1, 4.1.2", qa)
+        self.assertIn("form input#email", qa)
+        developer_rows = list(csv.reader(io.StringIO(developer)))
+        self.assertIn('<input id="email">', developer_rows[1])
+        self.assertIn("scan-desktop.png", developer)
 
     def test_public_html_is_branded_read_only_and_not_indexed(self) -> None:
         document = build_html(sample_scan(), "executive")

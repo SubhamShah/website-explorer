@@ -58,6 +58,28 @@ class IssueGroupingTests(unittest.TestCase):
         self.assertEqual(infer_page_priority("https://example.com/services/cloud"), "high_value")
         self.assertEqual(infer_page_priority("https://example.com/blog/news"), "standard")
 
+    def test_shared_template_becomes_one_developer_task(self) -> None:
+        findings = []
+        for index in range(3):
+            item = finding(
+                f"https://example.com/blog/article-{index}",
+                title="Missing H1 heading",
+            )
+            item["metadata"] = {
+                "template_id": "blog-article",
+                "template_label": "Blog article template",
+                "template_confidence": "high",
+            }
+            findings.append(item)
+
+        groups = build_issue_groups(findings)
+
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0]["shared_origin"]["kind"], "template")
+        self.assertEqual(groups[0]["shared_origin"]["label"], "Blog article template")
+        self.assertEqual(groups[0]["shared_origin"]["affected_page_count"], 3)
+        self.assertIn("Fix this once", groups[0]["recommended_action"])
+
     def test_repeated_root_cause_groups_affected_pages(self) -> None:
         groups = build_issue_groups(
             [
@@ -72,6 +94,29 @@ class IssueGroupingTests(unittest.TestCase):
             groups[0]["affected_pages"],
             ["https://example.com/about", "https://example.com/contact"],
         )
+
+    def test_accessibility_group_keeps_a_quick_visual_locator(self) -> None:
+        item = finding(
+            "https://example.com/quiz",
+            title="Accessibility: Buttons must have discernible text",
+        )
+        item["category"] = "accessibility"
+        item["metadata"] = {
+            "plain_problem": "This button has no accessible name.",
+            "plain_fix": "Add visible text or an aria-label.",
+            "element_label": "Unnamed button",
+            "page_section": "Question 1 section",
+            "element_screenshot_path": "scan-a11y-1.png",
+            "affected_element": "button.icon",
+            "axe_rule_id": "button-name",
+        }
+
+        group = build_issue_groups([item])[0]
+
+        self.assertEqual(group["plain_problem"], "This button has no accessible name.")
+        self.assertEqual(group["example_element_label"], "Unnamed button")
+        self.assertEqual(group["example_page_section"], "Question 1 section")
+        self.assertEqual(group["example_element_screenshot_path"], "scan-a11y-1.png")
 
     def test_comparison_marks_new_fixed_recurring_and_unchanged(self) -> None:
         stable_before = build_issue_groups([finding("https://example.com/a")])

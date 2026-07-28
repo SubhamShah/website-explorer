@@ -662,8 +662,450 @@
   color: #9b6208;
 }
 
+.shared-origin {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid #b9d9c7;
+  border-left: 4px solid #2d8a59;
+  border-radius: 8px;
+  background: #f0f8f3;
+}
+
+.shared-origin > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.shared-origin span {
+  padding: 3px 6px;
+  border-radius: 9px;
+  background: #dcefe3;
+  color: #246746;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.shared-origin b {
+  color: #214d37;
+  font-size: 11px;
+}
+
+.shared-origin p {
+  margin: 5px 0 0;
+  font-size: 10px;
+}
+
 .metrics {
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+}
+
+.accessibility-evidence {
+  margin-top: 16px;
+  padding-top: 2px;
+}
+
+.accessibility-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 9px;
+}
+
+.accessibility-summary > div {
+  padding: 10px;
+  border: 1px solid #dce8e0;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.accessibility-summary b,
+.accessibility-summary span {
+  display: block;
+}
+
+.accessibility-summary b {
+  color: #187249;
+  font-size: 18px;
+}
+
+.accessibility-summary span {
+  color: #60766b;
+  font-size: 9px;
+}
+
+.accessibility-page-findings {
+  max-height: 360px;
+  margin-top: 9px;
+  overflow-y: auto;
+  border: 1px solid #dce8e0;
+  border-radius: 9px;
+  background: #fff;
+}
+
+.accessibility-page-findings article {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  padding: 11px;
+  border-bottom: 1px solid #edf2ef;
+}
+
+.accessibility-page-findings article:last-child {
+  border-bottom: 0;
+}
+
+.accessibility-page-findings small,
+.accessibility-page-findings code {
+  display: block;
+  margin-top: 4px;
+  color: #60766b;
+  font-size: 9px;
+  overflow-wrap: anywhere;
+}
+
+.accessibility-page-findings p {
+  margin: 6px 0 0;
+  font-size: 10px;
+}
+
+.accessibility-page-findings code,
+.accessibility-finding-evidence code {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #f3f6f4;
+  white-space: pre-wrap;
+}
+
+.automation-note {
+  margin: 9px 0 0;
+  padding: 8px 10px;
+  border-left: 3px solid #c1923c;
+  background: #fff9ed;
+  font-size: 9px;
+}
+
+.accessibility-finding-evidence {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid #dce8e0;
+  border-radius: 8px;
+  background: #f8fbf9;
+}
+
+.accessibility-quick-locator {
+  margin-top: 10px;
+  overflow: hidden;
+  border: 1px solid #b8d8c5;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.quick-locator-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  background: #eaf6ee;
+}
+
+.quick-locator-heading > div {
+  display: grid;
+  gap: 2px;
+}
+
+.quick-locator-heading span,
+.quick-locator-facts span {
+  color: #4b7360;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.quick-locator-heading b {
+  color: #143f2b;
+  font-size: 12px;
+}
+
+.quick-locator-heading a,
+.element-preview span {
+  color: #1d7449;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.quick-locator-content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  padding: 11px;
+}
+
+.quick-locator-content:has(.element-preview) {
+  grid-template-columns: minmax(130px, .38fr) minmax(0, 1fr);
+}
+
+.element-preview {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  min-width: 0;
+  text-decoration: none;
+}
+
+.element-preview img {
+  width: 100%;
+  max-height: 150px;
+  object-fit: contain;
+  object-position: left top;
+  border: 2px solid #df4b4b;
+  border-radius: 7px;
+  background: #f4f6f5;
+}
+
+.quick-locator-facts {
+  display: grid;
+  gap: 7px;
+}
+
+.quick-locator-facts > div {
+  min-width: 0;
+  padding: 8px 9px;
+  border-left: 3px solid #7ab493;
+  background: #f7faf8;
+}
+
+.quick-locator-facts b,
+.quick-locator-facts p {
+  display: block;
+  margin: 3px 0 0;
+  color: #274b3a;
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.quick-locator-facts i {
+  color: #7a9287;
+  font-style: normal;
+}
+
+.quick-locator-facts .fastest-fix {
+  border-left-color: #d09a39;
+  background: #fff9ed;
+}
+
+.accessibility-technical {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid #dce8e0;
+  border-radius: 8px;
+  background: #f8fbf9;
+}
+
+.accessibility-technical summary {
+  cursor: pointer;
+  color: #315b49;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.accessibility-technical > div {
+  min-width: 0;
+  margin-top: 8px;
+}
+
+.accessibility-technical > div > b,
+.accessibility-technical > div > code {
+  display: block;
+  margin-top: 3px;
+  font-size: 9px;
+  overflow-wrap: anywhere;
+}
+
+.accessibility-technical code {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #eef3f0;
+  white-space: pre-wrap;
+}
+
+.accessibility-finding-evidence > div {
+  min-width: 0;
+}
+
+.accessibility-finding-evidence > div > b,
+.accessibility-finding-evidence > div > code {
+  display: block;
+  margin-top: 3px;
+  font-size: 9px;
+  overflow-wrap: anywhere;
+}
+
+.accessibility-rule {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.accessibility-rule .engine-label {
+  padding: 3px 6px;
+  border-radius: 8px;
+  border: 1px solid #d7e0da;
+  background: #f0f3f1;
+  color: #607068;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.accessibility-rule small {
+  color: #60766b;
+}
+
+.rule-disclosure {
+  min-width: 0;
+}
+
+.rule-disclosure > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 8px;
+  border: 1px solid #79b892;
+  border-radius: 7px;
+  background: #eaf6ee;
+  color: #176d43;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 900;
+  list-style: none;
+}
+
+.rule-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.rule-disclosure > summary::after {
+  content: "Explain";
+  padding-left: 7px;
+  border-left: 1px solid #abd2ba;
+  color: #527364;
+  font-size: 7px;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+
+.rule-disclosure[open] {
+  flex: 1 0 100%;
+}
+
+.rule-disclosure[open] > summary {
+  background: #1f754b;
+  color: #fff;
+}
+
+.rule-disclosure[open] > summary::after {
+  content: "Hide";
+  border-left-color: #82b79a;
+  color: #e3f2e9;
+}
+
+.rule-disclosure > summary:focus-visible {
+  outline: 3px solid rgba(35, 125, 78, .24);
+  outline-offset: 2px;
+}
+
+.rule-explanation {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid #bddbc9;
+  border-radius: 8px;
+  background: #f5faf7;
+}
+
+.rule-explanation > div {
+  min-width: 0;
+  padding: 8px 9px;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.rule-explanation span {
+  color: #4b7360;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+
+.rule-explanation p {
+  margin: 4px 0 0;
+  color: #345545;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.rule-explanation .rule-code-example {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 6px;
+}
+
+.rule-code-example > div {
+  display: grid;
+  grid-template-columns: 45px minmax(0, 1fr);
+  align-items: start;
+  gap: 7px;
+}
+
+.rule-code-example small {
+  padding-top: 6px;
+  color: #71847b;
+  font-size: 8px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.rule-code-example code {
+  padding: 6px 8px;
+  border-left: 3px solid #c85252;
+  border-radius: 5px;
+  background: #fff1f1;
+  color: #5f3434;
+  font-size: 9px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.rule-code-example > div:last-child code {
+  border-left-color: #31815a;
+  background: #eaf7ef;
+  color: #28543c;
+}
+
+.accessibility-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.accessibility-links a {
+  color: #287a50;
+  font-size: 9px;
+  font-weight: 800;
 }
 
 .responsive-evidence {
@@ -1041,6 +1483,32 @@
   }
 
   .viewport-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .accessibility-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .accessibility-rule {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .rule-disclosure[open] {
+    width: 100%;
+  }
+
+  .rule-explanation {
+    grid-template-columns: 1fr;
+  }
+
+  .quick-locator-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .quick-locator-content:has(.element-preview) {
     grid-template-columns: 1fr;
   }
 

@@ -74,6 +74,22 @@ class ContentQualityTests(unittest.TestCase):
         )
         self.assertFalse(any("alternative text" in finding["title"] for finding in findings))
 
+    def test_noindex_output_can_be_disabled_independently(self) -> None:
+        findings = page_content_findings(
+            "https://example.com",
+            {
+                "h1_count": 1,
+                "word_count": 200,
+                "placeholder_matches": [],
+                "images_missing_alt": [],
+                "canonical_urls": [],
+                "noindex": True,
+            },
+            {**DEFAULT_CONTENT_CHECKS, "indexing": False},
+        )
+
+        self.assertFalse(any(finding["title"] == "Page is marked noindex" for finding in findings))
+
 
 class FakePolicy:
     def allows(self, url: str) -> bool:

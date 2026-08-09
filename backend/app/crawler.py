@@ -28,6 +28,19 @@ USER_AGENT = "BugBusterWebsiteExplorer/0.2"
 NAVIGATION_TIMEOUT_MS = 30_000
 DEFAULT_RATE_LIMIT_MS = 750
 MAX_ROBOTS_DELAY_SECONDS = 10
+DEFAULT_SCAN_OPTIONS = {
+    "page_health": True,
+    "performance": True,
+    "seo": True,
+    "content_quality": True,
+    "screenshots": True,
+    "responsive": False,
+    "accessibility": False,
+    "console": False,
+    "network": False,
+    "sitemap_indexing": False,
+    "template_intelligence": False,
+}
 TRACKING_QUERY_KEYS = {"fbclid", "gclid", "dclid", "msclkid"}
 RETRYABLE_PAGE_STATUSES = {404, 408, 425, 429, 500, 502, 503, 504}
 ANALYTICS_HOST_SUFFIXES = {
@@ -376,6 +389,7 @@ async def scan_website(
     max_pages: int,
     max_depth: int,
     content_checks: dict | None = None,
+    scan_options: dict | None = None,
 ) -> None:
     store.update_scan(scan_id, status="running")
     SCREENSHOTS.mkdir(parents=True, exist_ok=True)
@@ -389,23 +403,35 @@ async def scan_website(
     actionable_failed_request_count = ignored_failed_request_count = 0
     skipped_robots = blocked_redirects = 0
     responsive_viewport_count = 0
+    options = {**DEFAULT_SCAN_OPTIONS, **(scan_options or {})}
+    score_enabled = any(
+        options[key]
+        for key in ("page_health", "performance", "seo", "console", "network")
+    )
     settings = {**DEFAULT_CONTENT_CHECKS, **(content_checks or {})}
+    if not options["content_quality"]:
+        settings = {
+            key: (value if key == "short_content_words" else False)
+            for key, value in settings.items()
+        }
+    settings["indexing"] = options["sitemap_indexing"]
     page_records: list[dict] = []
     site_analysis: dict = {}
     findings: list[dict] = []
     axe_source = None
-    try:
-        axe_source = load_axe_source()
-    except RuntimeError as accessibility_error:
-        findings.append(
-            {
-                "page_url": normalized_root,
-                "severity": "low",
-                "category": "accessibility",
-                "title": "Accessibility engine unavailable",
-                "detail": str(accessibility_error),
-            }
-        )
+    if options["accessibility"]:
+        try:
+            axe_source = load_axe_source()
+        except RuntimeError as accessibility_error:
+            findings.append(
+                {
+                    "page_url": normalized_root,
+                    "severity": "low",
+                    "category": "accessibility",
+                    "title": "Accessibility engine unavailable",
+                    "detail": str(accessibility_error),
+                }
+            )
     try:
         async with async_playwright() as playwright:
             browser = await playwright.chromium.launch(headless=True)
@@ -414,7 +440,11 @@ async def scan_website(
                 ignore_https_errors=False,
             )
             policy = await load_robots_policy(context, normalized_root)
-            sitemap = await discover_sitemap_urls(context, normalized_root)
+            sitemap = (
+                await discover_sitemap_urls(context, normalized_root)
+                if options["sitemap_indexing"]
+                else {"sources": [], "urls": [], "errors": [], "truncated": False}
+            )
             normalized_sitemap_urls = set()
             for sitemap_item in sitemap.get("urls", []):
                 try:
@@ -428,7 +458,7 @@ async def scan_website(
                 if sitemap_url != normalized_root and sitemap_url not in queued:
                     queue.append((sitemap_url, 0))
                     queued.add(sitemap_url)
-            if policy.disallow_all:
+            if policy.disallow_all and options["page_health"]:
                 findings.append(
                     {
                         "page_url": normalized_root,
@@ -448,15 +478,16 @@ async def scan_website(
                 visited.add(url)
                 if not policy.allows(url):
                     skipped_robots += 1
-                    findings.append(
-                        {
-                            "page_url": url,
-                            "severity": "low",
-                            "category": "crawler",
-                            "title": "Page skipped by robots.txt",
-                            "detail": "The published robots policy does not allow this crawler to visit the page.",
-                        }
-                    )
+                    if options["page_health"]:
+                        findings.append(
+                            {
+                                "page_url": url,
+                                "severity": "low",
+                                "category": "crawler",
+                                "title": "Page skipped by robots.txt",
+                                "detail": "The published robots policy does not allow this crawler to visit the page.",
+                            }
+                        )
                     continue
 
                 elapsed_ms = (perf_counter() - last_navigation_started) * 1000
@@ -468,27 +499,29 @@ async def scan_website(
                 redirects: list[dict] = []
                 crawler_blocked_urls: set[str] = set()
                 page = await context.new_page()
-                page.on(
-                    "console",
-                    lambda message: console.append(
-                        {
-                            "level": message.type,
-                            "message": message.text,
-                            "location": message.location,
-                        }
+                if options["console"]:
+                    page.on(
+                        "console",
+                        lambda message: console.append(
+                            {
+                                "level": message.type,
+                                "message": message.text,
+                                "location": message.location,
+                            }
+                        )
+                        if message.type in {"error", "warning"}
+                        else None,
                     )
-                    if message.type in {"error", "warning"}
-                    else None,
-                )
                 def capture_response(response: object) -> None:
-                    network.append(
-                        {
-                            "method": response.request.method,
-                            "url": response.url,
-                            "status": response.status,
-                            "resource_type": response.request.resource_type,
-                        }
-                    )
+                    if options["network"]:
+                        network.append(
+                            {
+                                "method": response.request.method,
+                                "url": response.url,
+                                "status": response.status,
+                                "resource_type": response.request.resource_type,
+                            }
+                        )
                     if 300 <= response.status < 400 and response.request.is_navigation_request():
                         redirects.append(
                             {
@@ -511,7 +544,8 @@ async def scan_website(
                         }
                     )
 
-                page.on("requestfailed", capture_failed_request)
+                if options["network"]:
+                    page.on("requestfailed", capture_failed_request)
 
                 async def enforce_navigation_boundary(route: object) -> None:
                     if route.request.is_navigation_request() and not same_site(route.request.url, normalized_root):
@@ -617,29 +651,42 @@ async def scan_website(
                             ),
                             "images_missing_alt": page_data.get("images_missing_alt", []),
                             "images_missing_alt_count": page_data.get("images_missing_alt_count", 0),
-                            "template": template_metadata(
-                                url,
-                                page_data.get("template_tokens", []),
+                            "template": (
+                                template_metadata(url, page_data.get("template_tokens", []))
+                                if options["template_intelligence"]
+                                else {}
                             ),
                         }
-                        try:
-                            responsive = await capture_responsive_evidence(
-                                page,
-                                SCREENSHOTS,
-                                f"{scan_id}-{page_count + 1}",
-                            )
-                            screenshot_path = responsive.get("desktop", {}).get("screenshot_path")
-                            responsive_viewport_count += len(responsive)
-                        except Exception as responsive_error:
-                            findings.append(
-                                {
-                                    "page_url": url,
-                                    "severity": "low",
-                                    "category": "responsive",
-                                    "title": "Responsive capture incomplete",
-                                    "detail": f"Viewport evidence could not be completed: {str(responsive_error)[:240]}",
-                                }
-                            )
+                        if options["responsive"]:
+                            try:
+                                responsive = await capture_responsive_evidence(
+                                    page,
+                                    SCREENSHOTS,
+                                    f"{scan_id}-{page_count + 1}",
+                                )
+                                screenshot_path = responsive.get("desktop", {}).get("screenshot_path")
+                                responsive_viewport_count += len(responsive)
+                            except Exception as responsive_error:
+                                findings.append(
+                                    {
+                                        "page_url": url,
+                                        "severity": "low",
+                                        "category": "responsive",
+                                        "title": "Responsive capture incomplete",
+                                        "detail": f"Viewport evidence could not be completed: {str(responsive_error)[:240]}",
+                                    }
+                                )
+                        elif options["screenshots"]:
+                            try:
+                                screenshot_filename = f"{scan_id}-{page_count + 1}-desktop.png"
+                                await page.set_viewport_size({"width": 1440, "height": 900})
+                                await page.screenshot(
+                                    path=str(SCREENSHOTS / screenshot_filename),
+                                    full_page=True,
+                                )
+                                screenshot_path = screenshot_filename
+                            except Exception:
+                                screenshot_path = None
                         if status < 400 and axe_source:
                             try:
                                 await page.set_viewport_size({"width": 1440, "height": 900})
@@ -652,6 +699,9 @@ async def scan_website(
                                     SCREENSHOTS,
                                     f"{scan_id}-{page_count + 1}",
                                 )
+                                if not options["template_intelligence"]:
+                                    for accessibility_result in accessibility_results:
+                                        accessibility_result.get("metadata", {}).pop("component_hint", None)
                                 findings.extend(accessibility_results)
                                 quality["accessibility"] = accessibility_summary
                             except Exception as accessibility_error:
@@ -671,11 +721,13 @@ async def scan_website(
                     timeout_count += 1
                     error_type = "timeout"
                     error_detail = f"Navigation did not reach DOM content loaded within {NAVIGATION_TIMEOUT_MS:,} ms."
-                    network.append({"method": "GET", "url": url, "status": "timeout", "resource_type": "document", "error": error_detail})
+                    if options["network"]:
+                        network.append({"method": "GET", "url": url, "status": "timeout", "resource_type": "document", "error": error_detail})
                 except Exception as error:
                     error_type = "navigation_error"
                     error_detail = str(error)[:300]
-                    network.append({"method": "GET", "url": url, "status": "failed", "resource_type": "document", "error": error_detail})
+                    if options["network"]:
+                        network.append({"method": "GET", "url": url, "status": "failed", "resource_type": "document", "error": error_detail})
 
                 load_ms = round((perf_counter() - started) * 1000)
                 page_count += 1
@@ -715,7 +767,7 @@ async def scan_website(
                     }
                 )
 
-                if error_type:
+                if error_type and options["page_health"]:
                     title_text = {
                         "timeout": "Page load timed out",
                         "cross_domain_redirect": "Cross-domain redirect blocked",
@@ -729,7 +781,7 @@ async def scan_website(
                             "detail": error_detail or "Navigation failed.",
                         }
                     )
-                elif status >= 400 or status == 0:
+                elif (status >= 400 or status == 0) and options["page_health"]:
                     findings.append(
                         {
                             "page_url": url,
@@ -740,21 +792,24 @@ async def scan_website(
                         }
                     )
                 if not error_type:
-                    if not title.strip():
+                    if options["seo"] and not title.strip():
                         findings.append({"page_url": url, "severity": "medium", "category": "seo", "title": "Missing page title", "detail": "This page does not have a usable HTML title."})
-                    if not meta_description.strip():
+                    if options["seo"] and not meta_description.strip():
                         findings.append({"page_url": url, "severity": "low", "category": "seo", "title": "Missing meta description", "detail": "This page does not expose a meta description."})
-                    if load_ms > 3000:
+                    if options["performance"] and load_ms > 3000:
                         findings.append({"page_url": url, "severity": "medium", "category": "performance", "title": "Slow page load", "detail": f"The page took {load_ms} ms to reach DOM content loaded."})
-                    findings.extend(responsive_findings(url, responsive))
-                    if status < 400:
+                    if options["responsive"]:
+                        findings.extend(responsive_findings(url, responsive))
+                    if status < 400 and options["content_quality"]:
                         findings.extend(page_content_findings(url, quality, settings))
-                for item in console:
-                    findings.append(console_finding(url, item))
-                for item in network:
-                    if item.get("status") in {"timeout", "failed"} and item.get("url") == url:
-                        continue
-                    findings.append(network_finding(url, item))
+                if options["console"]:
+                    for item in console:
+                        findings.append(console_finding(url, item))
+                if options["network"]:
+                    for item in network:
+                        if item.get("status") in {"timeout", "failed"} and item.get("url") == url:
+                            continue
+                        findings.append(network_finding(url, item))
                 console_count += len(console)
                 network_request_count += len(network)
                 api_request_count += sum(item.get("resource_type") in {"fetch", "xhr"} for item in network)
@@ -783,7 +838,8 @@ async def scan_website(
                         "api_requests": api_request_count,
                         "passed_requests": passed_request_count,
                         "timeouts": timeout_count,
-                        "health_score": live_score,
+                        "health_score": live_score if score_enabled else None,
+                        "health_score_available": score_enabled,
                         "health_breakdown": live_breakdown,
                         "responsive_viewports": responsive_viewport_count,
                         "responsive_issues": sum(item.get("category") == "responsive" for item in findings),
@@ -802,15 +858,28 @@ async def scan_website(
                     if link not in visited and link not in queued:
                         queue.append((link, depth + 1))
                         queued.add(link)
-            quality_findings, site_analysis = aggregate_quality_findings(
-                page_records,
-                sitemap,
-                policy,
-                settings,
-                normalized_root,
-            )
-            findings.extend(quality_findings)
-            attach_template_metadata(findings, page_records)
+            if options["content_quality"] or options["sitemap_indexing"]:
+                quality_findings, analyzed_site = aggregate_quality_findings(
+                    page_records,
+                    sitemap,
+                    policy,
+                    settings,
+                    normalized_root,
+                )
+                findings.extend(
+                    finding
+                    for finding in quality_findings
+                    if (
+                        finding.get("category") == "content"
+                        and options["content_quality"]
+                    ) or (
+                        finding.get("category") == "indexing"
+                        and options["sitemap_indexing"]
+                    )
+                )
+                site_analysis = analyzed_site if options["sitemap_indexing"] else {}
+            if options["template_intelligence"]:
+                attach_template_metadata(findings, page_records)
             store.update_scan(scan_id, site_analysis=site_analysis)
             await browser.close()
 
@@ -844,7 +913,8 @@ async def scan_website(
                 "robots_policy": policy.status,
                 "robots_detail": policy.detail,
                 "rate_limit_ms": policy.rate_limit_ms,
-                "health_score": score,
+                "health_score": score if score_enabled else None,
+                "health_score_available": score_enabled,
                 "health_breakdown": health_breakdown,
                 "responsive_viewports": responsive_viewport_count,
                 "responsive_issues": sum(item.get("category") == "responsive" for item in findings),
@@ -874,8 +944,11 @@ def start_scan(
     max_pages: int,
     max_depth: int,
     content_checks: dict | None = None,
+    scan_options: dict | None = None,
 ) -> None:
-    task = asyncio.create_task(scan_website(scan_id, url, max_pages, max_depth, content_checks))
+    task = asyncio.create_task(
+        scan_website(scan_id, url, max_pages, max_depth, content_checks, scan_options)
+    )
     _BACKGROUND_TASKS[scan_id] = task
     task.add_done_callback(
         lambda completed, current_scan_id=scan_id: (

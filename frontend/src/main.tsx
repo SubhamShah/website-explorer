@@ -3,6 +3,8 @@ import { createRoot } from 'react-dom/client'
 import { filterFindings } from './filters'
 import { healthScoreTone } from './health'
 import { sitemapPresentation, type SitemapStatus } from './sitemap'
+import { startPressRepeat, stepPageCount } from './stepper'
+import { buildWebsiteUrl, parseWebsiteInput, recentWebsiteDomains, type UrlScheme } from './url'
 import './styles.css'
 import './progress.css'
 import './results.css'
@@ -55,6 +57,19 @@ type ContentChecks = {
   missing_image_alt: boolean
   canonical_tags: boolean
   short_content_words: number
+}
+type ScanOptions = {
+  page_health: boolean
+  performance: boolean
+  seo: boolean
+  content_quality: boolean
+  screenshots: boolean
+  responsive: boolean
+  accessibility: boolean
+  console: boolean
+  network: boolean
+  sitemap_indexing: boolean
+  template_intelligence: boolean
 }
 type SiteAnalysis = {
   sitemap_sources?: string[]
@@ -216,6 +231,7 @@ type Summary = {
   api_requests?: number
   passed_requests?: number
   health_score?: number
+  health_score_available?: boolean
   health_breakdown?: {
     page_reliability?: number
     network_failures?: number
@@ -251,6 +267,7 @@ type Scan = {
   report_title?: string
   brand_color?: string
   content_checks?: ContentChecks
+  scan_options?: ScanOptions
   site_analysis?: SiteAnalysis
   page_count?: number
   finding_count?: number
@@ -277,8 +294,58 @@ const DEFAULT_CONTENT_CHECKS: ContentChecks = {
   short_content_words: 100,
 }
 
+const DEFAULT_SCAN_OPTIONS: ScanOptions = {
+  page_health: true,
+  performance: true,
+  seo: true,
+  content_quality: true,
+  screenshots: true,
+  responsive: false,
+  accessibility: false,
+  console: false,
+  network: false,
+  sitemap_indexing: false,
+  template_intelligence: false,
+}
+
+const ALL_SCAN_OPTIONS: ScanOptions = Object.fromEntries(
+  Object.keys(DEFAULT_SCAN_OPTIONS).map((key) => [key, true]),
+) as unknown as ScanOptions
+
+const SCAN_OPTION_CHOICES: {
+  key: keyof ScanOptions
+  label: string
+  description: string
+  level: 'Recommended' | 'Optional'
+}[] = [
+  { key: 'content_quality', label: 'Content quality', description: 'Check headings, repeated content, broken links, empty text, and images.', level: 'Recommended' },
+  { key: 'page_health', label: 'Broken and unavailable pages', description: 'Find pages that time out, return errors, or cannot be opened.', level: 'Recommended' },
+  { key: 'performance', label: 'Slow pages', description: 'Flag pages that take more than three seconds to load.', level: 'Recommended' },
+  { key: 'seo', label: 'Basic search information', description: 'Check page titles and search-result descriptions.', level: 'Recommended' },
+  { key: 'screenshots', label: 'Standard page screenshots', description: 'Save one desktop image per page so common issues are easier to locate.', level: 'Recommended' },
+  { key: 'responsive', label: 'Phone and tablet layouts', description: 'Check layouts and save desktop, tablet, and mobile visual evidence.', level: 'Optional' },
+  { key: 'accessibility', label: 'Accessibility and ARIA', description: 'Run detailed WCAG and screen-reader checks with axe-core.', level: 'Optional' },
+  { key: 'console', label: 'Browser console messages', description: 'Record technical warnings and errors produced by page scripts.', level: 'Optional' },
+  { key: 'network', label: 'API and network activity', description: 'Record passed and failed API, image, font, script, and document requests.', level: 'Optional' },
+  { key: 'sitemap_indexing', label: 'Sitemap and search indexing', description: 'Compare crawled pages with sitemap, robots, canonical, and noindex signals.', level: 'Optional' },
+  { key: 'template_intelligence', label: 'Shared templates and components', description: 'Group repeated issues that likely come from the same layout or component.', level: 'Optional' },
+]
+
+const CONTENT_CHECK_CHOICES: [keyof Omit<ContentChecks, 'short_content_words'>, string][] = [
+  ['duplicate_titles', 'Duplicate titles'],
+  ['duplicate_descriptions', 'Duplicate descriptions'],
+  ['headings', 'Missing or multiple H1'],
+  ['broken_internal_links', 'Broken internal links'],
+  ['empty_pages', 'Empty pages'],
+  ['placeholder_text', 'Placeholder text'],
+  ['short_content', 'Extremely short content'],
+  ['missing_image_alt', 'Missing image alternative text'],
+  ['canonical_tags', 'Incorrect canonical tags'],
+]
+
 function App() {
   const [url, setUrl] = useState('')
+  const [urlScheme, setUrlScheme] = useState<UrlScheme>('https')
   const [authorized, setAuthorized] = useState(false)
   const [maxPages, setMaxPages] = useState(25)
   const [scans, setScans] = useState<Scan[]>([])
@@ -300,6 +367,7 @@ function App() {
   const [shareUrl, setShareUrl] = useState('')
   const [savingReport, setSavingReport] = useState(false)
   const [contentChecks, setContentChecks] = useState<ContentChecks>(DEFAULT_CONTENT_CHECKS)
+  const [scanOptions, setScanOptions] = useState<ScanOptions>(DEFAULT_SCAN_OPTIONS)
   const [pagesTotal, setPagesTotal] = useState(0)
   const [findingsTotal, setFindingsTotal] = useState(0)
   const [loadingMorePages, setLoadingMorePages] = useState(false)
@@ -310,6 +378,36 @@ function App() {
   const overviewRequestActive = useRef<string | null>(null)
   const statusRequestActive = useRef<string | null>(null)
   const collectionsRequestActive = useRef<string | null>(null)
+  const stopPageStepHoldRef = useRef<(() => void) | null>(null)
+  const pageStepPointerHandledRef = useRef(false)
+
+  const changeMaxPages = (change: number) => {
+    setMaxPages((current) => stepPageCount(current, change))
+  }
+
+  const stopPageStepHold = () => {
+    stopPageStepHoldRef.current?.()
+    stopPageStepHoldRef.current = null
+  }
+
+  const startPageStepHold = (change: number) => {
+    stopPageStepHold()
+    changeMaxPages(change)
+    stopPageStepHoldRef.current = startPressRepeat(() => changeMaxPages(change))
+  }
+
+  const handlePageStepClick = (change: number) => {
+    if (pageStepPointerHandledRef.current) {
+      pageStepPointerHandledRef.current = false
+      return
+    }
+    changeMaxPages(change)
+  }
+
+  const cancelPageStepHold = () => {
+    stopPageStepHold()
+    pageStepPointerHandledRef.current = false
+  }
 
   const findingsEndpoint = (scanId: string, offset: number, limit: number) => {
     const parameters = new URLSearchParams({
@@ -407,6 +505,7 @@ function App() {
   }
 
   useEffect(() => { void loadScans() }, [])
+  useEffect(() => () => stopPageStepHoldRef.current?.(), [])
   useEffect(() => {
     const timer = window.setInterval(() => {
       void loadScans()
@@ -462,15 +561,24 @@ function App() {
     }
     setStarting(true)
     try {
+      const targetUrl = buildWebsiteUrl(urlScheme, url)
       const response = await fetch(`${API}/scans`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, authorized, max_pages: maxPages, max_depth: 3, content_checks: contentChecks }),
+        body: JSON.stringify({
+          url: targetUrl,
+          authorized,
+          max_pages: maxPages,
+          max_depth: 3,
+          content_checks: contentChecks,
+          scan_options: scanOptions,
+        }),
       })
       const payload = await response.json()
       if (!response.ok) throw new Error(payload.detail)
       setMessage('Website scan started. Results will update automatically.')
       setUrl('')
+      setUrlScheme('https')
       setAuthorized(false)
       await loadScans()
       await openScan(payload.id)
@@ -631,6 +739,14 @@ function App() {
   }
 
   const summary = selected?.summary || {}
+  const selectedScanOptions = selected?.scan_options && Object.keys(selected.scan_options).length
+    ? { ...DEFAULT_SCAN_OPTIONS, ...selected.scan_options }
+    : ALL_SCAN_OPTIONS
+  const scoreChecksSelected = selectedScanOptions.page_health
+    || selectedScanOptions.performance
+    || selectedScanOptions.seo
+    || selectedScanOptions.console
+    || selectedScanOptions.network
   const scanInProgress = selected?.status === 'queued' || selected?.status === 'running'
   const findings = selected?.findings || []
   const issueGroups = selected?.issue_groups || []
@@ -662,6 +778,10 @@ function App() {
   const comparableScans = scans.filter(
     (scan) => scan.id !== selected?.id && scan.url === selected?.url && scan.status === 'completed',
   )
+  const recentDomains = useMemo(
+    () => recentWebsiteDomains(scans.map((scan) => scan.url)),
+    [scans],
+  )
 
   return <main>
     <header>
@@ -675,42 +795,134 @@ function App() {
       <strong className="progress-count">{summary.pages_scanned ?? selected.pages?.length ?? 0} / {selected.max_pages} pages</strong>
     </div>}
 
-    <section className="card start-card">
-      <h2>Start a website scan</h2>
-      <form onSubmit={start}>
-        <label className="scan-field website-field"><span>Website URL</span><input required type="url" placeholder="https://your-website.com" value={url} onChange={(event) => setUrl(event.target.value)} /></label>
-        <label className="scan-field page-limit-field">
-          <span>Maximum pages <small>1-250</small></span>
-          <div className="page-stepper">
-            <button type="button" aria-label="Decrease maximum pages" onClick={() => setMaxPages((current) => Math.max(1, current - 1))}>-</button>
-            <input aria-label="Maximum pages" type="number" min="1" max="250" value={maxPages} onChange={(event) => setMaxPages(Math.min(250, Math.max(1, Number(event.target.value))))} />
-            <button type="button" aria-label="Increase maximum pages" onClick={() => setMaxPages((current) => Math.min(250, current + 1))}>+</button>
+    <form className="scan-setup-form" onSubmit={start}>
+      <section className="card start-card scan-target-card" aria-labelledby="scan-target-heading">
+        <div className="workflow-heading">
+          <span className="workflow-step">1</span>
+          <div><span className="eyebrow">Website and authorization</span><h2 id="scan-target-heading">Scan a website</h2><p>Enter the public website you are authorized to test and choose a safe page limit.</p></div>
+        </div>
+        <div className="scan-target-grid">
+          <label className="scan-field website-field">
+            <span>Website domain <small>HTTPS selected by default</small></span>
+            <div className="website-address-control">
+              <select aria-label="Website protocol" value={urlScheme} onChange={(event) => setUrlScheme(event.target.value as UrlScheme)}>
+                <option value="https">https://</option>
+                <option value="http">http://</option>
+              </select>
+              <input
+                required
+                type="text"
+                inputMode="url"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                placeholder="your-website.com"
+                value={url}
+                onChange={(event) => {
+                  const parsed = parseWebsiteInput(event.target.value, urlScheme)
+                  setUrlScheme(parsed.scheme)
+                  setUrl(parsed.domain)
+                }}
+              />
+              <select
+                className="recent-domain-select"
+                aria-label="Recently scanned domains"
+                value=""
+                disabled={!recentDomains.length}
+                onChange={(event) => {
+                  if (!event.target.value) return
+                  const parsed = parseWebsiteInput(event.target.value, urlScheme)
+                  setUrlScheme(parsed.scheme)
+                  setUrl(parsed.domain)
+                }}
+              >
+                <option value="">{recentDomains.length ? 'Recent domains' : 'No recent domains'}</option>
+                {recentDomains.map((item) => <option value={item.url} key={item.domain}>{item.domain}</option>)}
+              </select>
+            </div>
+          </label>
+          <label className="scan-field page-limit-field">
+            <span>Maximum pages <small>1-250</small></span>
+            <div className="page-stepper">
+              <button
+                type="button"
+                aria-label="Decrease maximum pages"
+                title="Decrease pages (press and hold for continuous change)"
+                onClick={() => handlePageStepClick(-1)}
+                onPointerDown={(event) => { if (event.button === 0) { pageStepPointerHandledRef.current = true; startPageStepHold(-1) } }}
+                onPointerUp={stopPageStepHold}
+                onPointerCancel={cancelPageStepHold}
+                onPointerLeave={cancelPageStepHold}
+              >−</button>
+              <input aria-label="Maximum pages" type="number" min="1" max="250" value={maxPages} onChange={(event) => setMaxPages(Math.min(250, Math.max(1, Number(event.target.value))))} />
+              <button
+                type="button"
+                aria-label="Increase maximum pages"
+                title="Increase pages (press and hold for continuous change)"
+                onClick={() => handlePageStepClick(1)}
+                onPointerDown={(event) => { if (event.button === 0) { pageStepPointerHandledRef.current = true; startPageStepHold(1) } }}
+                onPointerUp={stopPageStepHold}
+                onPointerCancel={cancelPageStepHold}
+                onPointerLeave={cancelPageStepHold}
+              >+</button>
+            </div>
+          </label>
+          <label className={authorized ? 'consent consent-confirmed' : 'consent'}><input type="checkbox" checked={authorized} onChange={(event) => setAuthorized(event.target.checked)} /><span><b>Authorization confirmed</b><small>I own this website or have permission to scan it.</small></span></label>
+        </div>
+      </section>
+
+      <section className="card scan-options-card" aria-labelledby="scan-options-heading">
+        <div className="workflow-heading">
+          <span className="workflow-step">2</span>
+          <div><span className="eyebrow">Scan coverage</span><h2 id="scan-options-heading">Choose what to check</h2><p>Start with the recommended checks or include advanced technical evidence when you need it.</p></div>
+        </div>
+        <fieldset className="scan-coverage-settings">
+          <legend>Scan coverage options</legend>
+          <div className="coverage-heading">
+            <p><b>{SCAN_OPTION_CHOICES.filter((option) => scanOptions[option.key]).length} of {SCAN_OPTION_CHOICES.length} selected.</b> Unchecked checks are not collected and will not appear in the results or report.</p>
+            <div className="coverage-actions">
+              <button type="button" onClick={() => setScanOptions(DEFAULT_SCAN_OPTIONS)}>Recommended</button>
+              <button type="button" onClick={() => setScanOptions(ALL_SCAN_OPTIONS)}>Select all</button>
+              <button type="button" onClick={() => setScanOptions((current) => Object.fromEntries(Object.keys(current).map((key) => [key, false])) as unknown as ScanOptions)}>Clear all</button>
+            </div>
           </div>
-        </label>
-        <button className="scan-start-button" disabled={starting}><span>{starting ? 'Starting scan...' : 'Start safe scan'}</span><small>Authorized read-only crawl</small></button>
-        <label className="consent"><input type="checkbox" checked={authorized} onChange={(event) => setAuthorized(event.target.checked)} /> I own this website or have authorization to scan it.</label>
-        <details className="content-check-settings">
-          <summary>Content-quality checks <span>9 configurable checks enabled by default</span></summary>
-          <div className="check-grid">
-            {([
-              ['duplicate_titles', 'Duplicate titles'],
-              ['duplicate_descriptions', 'Duplicate descriptions'],
-              ['headings', 'Missing or multiple H1'],
-              ['broken_internal_links', 'Broken internal links'],
-              ['empty_pages', 'Empty pages'],
-              ['placeholder_text', 'Placeholder text'],
-              ['short_content', 'Extremely short content'],
-              ['missing_image_alt', 'Missing image alternative text'],
-              ['canonical_tags', 'Incorrect canonical tags'],
-            ] as [keyof Omit<ContentChecks, 'short_content_words'>, string][]).map(([key, label]) =>
-              <label key={key}><input type="checkbox" checked={contentChecks[key]} onChange={(event) => setContentChecks((current) => ({ ...current, [key]: event.target.checked }))} /> {label}</label>,
-            )}
-            <label className="word-threshold"><span>Short-content minimum</span><input type="number" min="20" max="500" value={contentChecks.short_content_words} disabled={!contentChecks.short_content} onChange={(event) => setContentChecks((current) => ({ ...current, short_content_words: Math.min(500, Math.max(20, Number(event.target.value))) }))} /><small>visible words</small></label>
+          <div className="coverage-grid">
+            {SCAN_OPTION_CHOICES.map((option) => option.key === 'content_quality'
+              ? <article className={scanOptions.content_quality ? 'coverage-option content-coverage-option selected' : 'coverage-option content-coverage-option'} key={option.key}>
+                  <label className="coverage-option-main">
+                    <input type="checkbox" checked={scanOptions.content_quality} onChange={(event) => setScanOptions((current) => ({ ...current, content_quality: event.target.checked }))} />
+                    <span><b>{option.label}</b><small>{option.description}</small></span>
+                    <em>{option.level}</em>
+                  </label>
+                  {scanOptions.content_quality && <details className="embedded-content-settings">
+                    <summary>Customize content checks <span>{CONTENT_CHECK_CHOICES.filter(([key]) => contentChecks[key]).length} of {CONTENT_CHECK_CHOICES.length} selected</span></summary>
+                    <div className="check-grid">
+                      {CONTENT_CHECK_CHOICES.map(([key, label]) =>
+                        <label key={key}><input type="checkbox" checked={contentChecks[key]} onChange={(event) => setContentChecks((current) => ({ ...current, [key]: event.target.checked }))} /> {label}</label>,
+                      )}
+                      <label className="word-threshold"><span>Short-content minimum</span><input type="number" min="20" max="500" value={contentChecks.short_content_words} disabled={!contentChecks.short_content} onChange={(event) => setContentChecks((current) => ({ ...current, short_content_words: Math.min(500, Math.max(20, Number(event.target.value))) }))} /><small>visible words</small></label>
+                    </div>
+                  </details>}
+                </article>
+              : <label className={scanOptions[option.key] ? 'coverage-option selected' : 'coverage-option'} key={option.key}>
+                  <input type="checkbox" checked={scanOptions[option.key]} onChange={(event) => setScanOptions((current) => ({ ...current, [option.key]: event.target.checked }))} />
+                  <span><b>{option.label}</b><small>{option.description}</small></span>
+                  <em>{option.level}</em>
+                </label>)}
           </div>
-        </details>
-      </form>
-      <p className="muted">Same-domain navigation only. Robots rules and crawl delays are respected. The explorer never logs in, submits forms, purchases, deletes, or publishes.</p>
-    </section>
+        </fieldset>
+        <div className="scan-action-row">
+          <p><b>Safe, read-only scan.</b> Same-domain navigation only. Robots rules and crawl delays are respected. The explorer never logs in, submits forms, purchases, deletes, or publishes.</p>
+          <button className={starting ? 'scan-start-button is-starting' : 'scan-start-button'} disabled={starting}>
+            <span className="scan-button-brand" aria-hidden="true">
+              <img src="/bugbuster-labs-logo.png" alt="" />
+            </span>
+            <span className="scan-button-copy"><strong>{starting ? 'Starting scan…' : 'Start safe scan'}</strong><small>BugBuster Labs · Authorized read-only crawl</small></span>
+            <span className="scan-button-arrow" aria-hidden="true">{starting ? '' : '→'}</span>
+          </button>
+        </div>
+      </section>
+    </form>
 
     <div className="layout">
       <section className="card scan-list">
@@ -732,26 +944,28 @@ function App() {
         {!selected ? <p className="muted">Select a scan to view its evidence.</p> : <>
           {selected.status === 'failed' && <p className="running">{selected.error || 'The scan failed without an error message. Restart the backend without reload mode and try again.'}</p>}
           <div className="metrics">
-            <article className={`health-metric ${healthScoreTone(summary.health_score)}`}><b>{summary.health_score ?? '-'}</b><span>Health score <small>/ 100</small></span></article>
+            <article className={`health-metric ${scoreChecksSelected ? healthScoreTone(summary.health_score) : 'neutral'}`}><b>{scoreChecksSelected ? (summary.health_score ?? '-') : '—'}</b><span>{scoreChecksSelected ? <>Health score <small>/ 100</small></> : 'Health score not calculated'}</span></article>
             <article><b>{summary.pages_scanned ?? 0}</b><span>Pages scanned</span></article>
-            <article><b>{summary.network_requests ?? 0}</b><span>Network requests</span></article>
-            <article><b>{summary.actionable_failed_requests ?? summary.failed_requests ?? 0}</b><span>Actionable failures</span></article>
-            <article><b>{summary.responsive_issues ?? 0}</b><span>Responsive issues</span></article>
-            <article><b>{summary.accessibility_issues ?? 0}</b><span>Accessibility issues</span></article>
+            {selectedScanOptions.network && <article><b>{summary.network_requests ?? 0}</b><span>Network requests</span></article>}
+            {selectedScanOptions.network && <article><b>{summary.actionable_failed_requests ?? summary.failed_requests ?? 0}</b><span>Actionable failures</span></article>}
+            {selectedScanOptions.responsive && <article><b>{summary.responsive_issues ?? 0}</b><span>Responsive issues</span></article>}
+            {selectedScanOptions.accessibility && <article><b>{summary.accessibility_issues ?? 0}</b><span>Accessibility issues</span></article>}
+            {selectedScanOptions.content_quality && <article><b>{summary.content_issues ?? 0}</b><span>Content issues</span></article>}
+            {selectedScanOptions.sitemap_indexing && <article><b>{summary.indexing_issues ?? 0}</b><span>Indexing issues</span></article>}
           </div>
-          {summary.health_breakdown && <details className="score-explainer">
+          {scoreChecksSelected && summary.health_breakdown && <details className="score-explainer">
             <summary>How this health score is calculated</summary>
             <p>The score starts at 100. Deductions are based on issue rates, not the total size of the crawl. {summary.ignored_failed_requests ? `${summary.ignored_failed_requests} low-impact network failures were excluded.` : ''}</p>
             <div className="score-breakdown">
-              <span><b>-{summary.health_breakdown.page_reliability ?? 0}</b> Page reliability <small>max 30</small></span>
-              <span><b>-{summary.health_breakdown.network_failures ?? 0}</b> Network failures <small>max 20</small></span>
-              <span><b>-{summary.health_breakdown.console_issues ?? 0}</b> Console issues <small>max 15</small></span>
-              <span><b>-{summary.health_breakdown.seo_coverage ?? 0}</b> SEO coverage <small>max 20</small></span>
-              <span><b>-{summary.health_breakdown.slow_pages ?? 0}</b> Slow pages <small>max 15</small></span>
+              {selectedScanOptions.page_health && <span><b>-{summary.health_breakdown.page_reliability ?? 0}</b> Page reliability <small>max 30</small></span>}
+              {selectedScanOptions.network && <span><b>-{summary.health_breakdown.network_failures ?? 0}</b> Network failures <small>max 20</small></span>}
+              {selectedScanOptions.console && <span><b>-{summary.health_breakdown.console_issues ?? 0}</b> Console issues <small>max 15</small></span>}
+              {selectedScanOptions.seo && <span><b>-{summary.health_breakdown.seo_coverage ?? 0}</b> SEO coverage <small>max 20</small></span>}
+              {selectedScanOptions.performance && <span><b>-{summary.health_breakdown.slow_pages ?? 0}</b> Slow pages <small>max 15</small></span>}
             </div>
           </details>}
           {summary.robots_policy && <div className="policy"><b>Robots policy: {summary.robots_policy.replace('_', ' ')}</b><span>{summary.robots_detail} Minimum delay: {summary.rate_limit_ms} ms.</span></div>}
-          <SiteAnalysisPanel analysis={selected.site_analysis} />
+          {selectedScanOptions.sitemap_indexing && <SiteAnalysisPanel analysis={selected.site_analysis} />}
           <ComparisonPanel comparison={selected.comparison} />
           <ReportPanel
             agencyName={agencyName}
@@ -820,7 +1034,12 @@ function App() {
                 return <article className={isExpanded ? 'page-item expanded' : 'page-item'} key={page.url}>
                   <div className="page-summary-row">
                     <button className="page-row" aria-expanded={isExpanded} aria-controls={`evidence-${page.id}`} onClick={() => void togglePageEvidence(page)}>
-                      <div><b>{page.title || 'Untitled page'}</b><p>{page.url}</p><small>Status {page.status || page.error_type || 'failed'} - {page.load_ms} ms - depth {page.depth} - {page.responsive_viewport_count ?? Object.keys(page.responsive || {}).length}/3 viewports</small></div>
+                      <div><b>{page.title || 'Discovered page'}</b><p>{page.url}</p><small>{[
+                        selectedScanOptions.page_health ? `Status ${page.status || page.error_type || 'failed'}` : '',
+                        selectedScanOptions.performance ? `${page.load_ms} ms` : '',
+                        `depth ${page.depth}`,
+                        selectedScanOptions.responsive ? `${page.responsive_viewport_count ?? Object.keys(page.responsive || {}).length}/3 viewports` : '',
+                      ].filter(Boolean).join(' - ')}</small></div>
                       <span>{isExpanded ? 'Hide evidence' : 'View evidence'} <i aria-hidden="true">{isExpanded ? '−' : '+'}</i></span>
                     </button>
                     <label className={`priority-control ${page.priority || 'standard'}`}>
@@ -833,8 +1052,8 @@ function App() {
                     </label>
                   </div>
                   {isExpanded && (loadingPageId === page.id
-                    ? <p className="evidence-loading" id={`evidence-${page.id}`}>Loading console, network, responsive, and content evidence...</p>
-                    : <PageEvidence page={detailedPage} findings={pageFindings} panelId={`evidence-${page.id}`} />)}
+                    ? <p className="evidence-loading" id={`evidence-${page.id}`}>Loading the evidence selected for this scan...</p>
+                    : <PageEvidence page={detailedPage} findings={pageFindings} panelId={`evidence-${page.id}`} options={selectedScanOptions} contentChecks={selected.content_checks || DEFAULT_CONTENT_CHECKS} />)}
                 </article>
               }) : <p className="muted">No pages recorded yet.</p>}
               {(selected.pages?.length || 0) < pagesTotal && <button className="load-more" disabled={loadingMorePages} onClick={() => void loadMorePages()}>
@@ -1082,7 +1301,19 @@ function AffectedPages({ urls }: { urls: string[] }) {
   </div>
 }
 
-function PageEvidence({ page, findings, panelId }: { page: Page; findings: Finding[]; panelId: string }) {
+function PageEvidence({
+  page,
+  findings,
+  panelId,
+  options,
+  contentChecks,
+}: {
+  page: Page
+  findings: Finding[]
+  panelId: string
+  options: ScanOptions
+  contentChecks: ContentChecks
+}) {
   const consoleItems = page.console || []
   const networkItems = page.network || []
   const redirects = page.redirect_chain || []
@@ -1090,29 +1321,35 @@ function PageEvidence({ page, findings, panelId }: { page: Page; findings: Findi
   const accessibilityFindings = findings.filter((finding) => finding.category === 'accessibility')
   const generalFindings = findings.filter((finding) => !['responsive', 'accessibility'].includes(finding.category))
   return <section className="inline-evidence" id={panelId} aria-label={`Evidence for ${page.url}`}>
-    {page.error_detail && <p className="error-box">{page.error_detail}</p>}
+    {options.page_health && page.error_detail && <p className="error-box">{page.error_detail}</p>}
     <dl>
-      <div><dt>Status</dt><dd>{page.status || 'Failed'}</dd></div>
-      <div><dt>Load time</dt><dd>{page.load_ms} ms</dd></div>
-      <div><dt>H1</dt><dd>{page.h1 || 'Missing'}</dd></div>
-      <div><dt>Meta description</dt><dd>{page.meta_description || 'Missing'}</dd></div>
+      {options.page_health && <div><dt>Status</dt><dd>{page.status || 'Failed'}</dd></div>}
+      {options.performance && <div><dt>Load time</dt><dd>{page.load_ms} ms</dd></div>}
+      {options.content_quality && contentChecks.headings && <div><dt>H1</dt><dd>{page.h1 || 'Missing'}</dd></div>}
+      {options.seo && <div><dt>Meta description</dt><dd>{page.meta_description || 'Missing'}</dd></div>}
     </dl>
-    <ContentEvidence quality={page.quality || {}} />
-    <AccessibilityEvidence
+    {(options.content_quality || options.sitemap_indexing || options.template_intelligence) && <ContentEvidence
+      quality={page.quality || {}}
+      contentEnabled={options.content_quality}
+      indexingEnabled={options.sitemap_indexing}
+      templateEnabled={options.template_intelligence}
+      checks={contentChecks}
+    />}
+    {options.accessibility && <AccessibilityEvidence
       summary={page.quality?.accessibility}
       findings={accessibilityFindings}
       screenshotPath={page.screenshot_path}
-    />
-    <ResponsiveEvidence evidence={page.responsive || {}} findings={responsiveFindings} />
-    {redirects.length > 0 && <EvidenceList title={`Redirects (${redirects.length})`} items={redirects.map((item) => `${item.status} ${item.from} -> ${item.to}`)} />}
+    />}
+    {options.responsive && <ResponsiveEvidence evidence={page.responsive || {}} findings={responsiveFindings} />}
+    {options.page_health && redirects.length > 0 && <EvidenceList title={`Redirects (${redirects.length})`} items={redirects.map((item) => `${item.status} ${item.from} -> ${item.to}`)} />}
     <EvidenceList title={`General findings (${generalFindings.length})`} items={generalFindings.map((item) => `${item.severity.toUpperCase()}: ${item.title} - ${item.detail}`)} />
-    <EvidenceList title={`Console (${consoleItems.length})`} items={consoleItems.map((item) => {
+    {options.console && <EvidenceList title={`Console (${consoleItems.length})`} items={consoleItems.map((item) => {
       const classification = item.classification ? ` [${item.severity || 'info'} - ${item.classification.replace(/_/g, ' ')}]` : ''
       const related = item.related_request_url ? ` Related request: ${item.related_request_url}` : ''
       return `${item.level}${classification}: ${item.message}${related}`
-    })} />
-    <NetworkEvidence items={networkItems} />
-    {page.screenshot_path && <a className="screenshot" href={`${API_ORIGIN}/evidence/${page.screenshot_path}`} target="_blank" rel="noreferrer">Open full-page screenshot</a>}
+    })} />}
+    {options.network && <NetworkEvidence items={networkItems} />}
+    {(options.screenshots || options.responsive || options.accessibility) && page.screenshot_path && <a className="screenshot" href={`${API_ORIGIN}/evidence/${page.screenshot_path}`} target="_blank" rel="noreferrer">Open full-page screenshot</a>}
   </section>
 }
 
@@ -1341,21 +1578,33 @@ function AccessibilityEvidence({
   </section>
 }
 
-function ContentEvidence({ quality }: { quality: PageQuality }) {
+function ContentEvidence({
+  quality,
+  contentEnabled,
+  indexingEnabled,
+  templateEnabled,
+  checks,
+}: {
+  quality: PageQuality
+  contentEnabled: boolean
+  indexingEnabled: boolean
+  templateEnabled: boolean
+  checks: ContentChecks
+}) {
   if (!Object.keys(quality).length) return null
   return <section className="content-evidence">
-    <div className="evidence-title"><b>Content and indexability</b><span>Rendered page evidence</span></div>
+    <div className="evidence-title"><b>Selected page checks</b><span>Rendered page evidence</span></div>
     <dl>
-      <div><dt>Visible words</dt><dd>{quality.word_count ?? 0}</dd></div>
-      <div><dt>H1 headings</dt><dd>{quality.h1_count ?? 0}</dd></div>
-      <div><dt>Missing image alt</dt><dd>{quality.images_missing_alt_count ?? 0}</dd></div>
-      <div><dt>Indexability</dt><dd className={quality.noindex ? 'failed' : 'passed'}>{quality.noindex ? 'noindex' : 'index allowed'}</dd></div>
+      {contentEnabled && (checks.empty_pages || checks.short_content) && <div><dt>Visible words</dt><dd>{quality.word_count ?? 0}</dd></div>}
+      {contentEnabled && checks.headings && <div><dt>H1 headings</dt><dd>{quality.h1_count ?? 0}</dd></div>}
+      {contentEnabled && checks.missing_image_alt && <div><dt>Missing image alt</dt><dd>{quality.images_missing_alt_count ?? 0}</dd></div>}
+      {indexingEnabled && <div><dt>Indexability</dt><dd className={quality.noindex ? 'failed' : 'passed'}>{quality.noindex ? 'noindex' : 'index allowed'}</dd></div>}
     </dl>
     <div className="content-evidence-lines">
-      <div><b>Canonical</b><span>{quality.canonical_urls?.length ? quality.canonical_urls.join(', ') : 'No canonical tag found'}</span></div>
-      <div><b>Robots directives</b><span>{quality.robots_directives?.length ? quality.robots_directives.join(', ') : 'No page-level directives'}</span></div>
-      {quality.placeholder_matches?.length ? <div><b>Placeholder text</b><span>{quality.placeholder_matches.join(', ')}</span></div> : null}
-      {quality.template?.template_label ? <div><b>Likely template</b><span>{quality.template.template_label} · {quality.template.template_confidence} confidence</span></div> : null}
+      {(indexingEnabled || (contentEnabled && checks.canonical_tags)) && <div><b>Canonical</b><span>{quality.canonical_urls?.length ? quality.canonical_urls.join(', ') : 'No canonical tag found'}</span></div>}
+      {indexingEnabled && <div><b>Robots directives</b><span>{quality.robots_directives?.length ? quality.robots_directives.join(', ') : 'No page-level directives'}</span></div>}
+      {contentEnabled && checks.placeholder_text && quality.placeholder_matches?.length ? <div><b>Placeholder text</b><span>{quality.placeholder_matches.join(', ')}</span></div> : null}
+      {templateEnabled && quality.template?.template_label ? <div><b>Likely template</b><span>{quality.template.template_label} · {quality.template.template_confidence} confidence</span></div> : null}
     </div>
   </section>
 }

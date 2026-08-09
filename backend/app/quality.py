@@ -131,7 +131,7 @@ def page_content_findings(page_url: str, page_data: dict, settings: dict) -> lis
                 findings.append({"page_url": page_url, "severity": "high", "category": "indexing", "title": "Canonical points outside the website", "detail": f"The page canonical points to {canonical}."})
             elif canonical.rstrip("/") != page_url.rstrip("/"):
                 findings.append({"page_url": page_url, "severity": "low", "category": "indexing", "title": "Canonical points to a different page", "detail": f"Verify that this intentional consolidation is correct: {canonical}"})
-    if page_data.get("noindex"):
+    if settings.get("indexing", True) and page_data.get("noindex"):
         findings.append({"page_url": page_url, "severity": "info", "category": "indexing", "title": "Page is marked noindex", "detail": "The rendered robots directives tell search engines not to index this page."})
     return findings
 

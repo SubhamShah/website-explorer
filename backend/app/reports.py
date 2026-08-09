@@ -273,6 +273,19 @@ def build_pdf(scan: dict, kind: str, comparison: dict | None = None) -> bytes:
     title = scan.get("report_title") or f"{kind.title()} website report"
     agency = scan.get("agency_name") or "BugBuster Website Explorer"
     summary = scan.get("summary", {})
+    options = scan.get("scan_options") or {}
+    health_value = summary.get("health_score")
+    health_label = f"{health_value}/100" if health_value is not None else "Not calculated"
+    summary_parts = [
+        f"Health score: {health_label}",
+        f"Pages scanned: {summary.get('pages_scanned', 0)}",
+        f"Root causes: {len(scan.get('issue_groups', []))}",
+    ]
+    if not options or options.get("network", False):
+        summary_parts.append(
+            "Actionable request failures: "
+            f"{summary.get('actionable_failed_requests', summary.get('failed_requests', 0))}"
+        )
     intro = [
         {"text": agency, "font": "F2", "size": 9, "leading": 12, "color": "brand", "gap": 0},
         {"text": title, "font": "F2", "size": 20, "leading": 24, "color": "body", "gap": 5},
@@ -281,12 +294,7 @@ def build_pdf(scan: dict, kind: str, comparison: dict | None = None) -> bytes:
         {"divider": True, "leading": 12, "gap": 9},
         {"text": "SCAN SUMMARY", "font": "F2", "size": 8, "leading": 11, "color": "brand", "gap": 2},
         {
-            "text": (
-                f"Health score: {summary.get('health_score', '-')}/100    "
-                f"Pages scanned: {summary.get('pages_scanned', 0)}    "
-                f"Root causes: {len(scan.get('issue_groups', []))}    "
-                f"Actionable request failures: {summary.get('actionable_failed_requests', summary.get('failed_requests', 0))}"
-            ),
+            "text": "    ".join(summary_parts),
             "font": "F2",
             "size": 10,
             "leading": 14,
@@ -417,6 +425,23 @@ def build_html(scan: dict, kind: str, comparison: dict | None = None) -> str:
     agency = html.escape(scan.get("agency_name") or "BugBuster Website Explorer")
     title = html.escape(scan.get("report_title") or f"{kind.title()} website report")
     summary = scan.get("summary", {})
+    options = scan.get("scan_options") or {}
+    health_value = summary.get("health_score")
+    health_label = str(health_value) if health_value is not None else "—"
+    metrics = [
+        (health_label, "Health score" if health_value is not None else "Health score not calculated"),
+        (summary.get("pages_scanned", 0), "Pages scanned"),
+        (len(scan.get("issue_groups", [])), "Root causes"),
+    ]
+    if not options or options.get("network", False):
+        metrics.append((
+            summary.get("actionable_failed_requests", summary.get("failed_requests", 0)),
+            "Request failures",
+        ))
+    metrics_html = "".join(
+        f"<b>{html.escape(str(value))}<small>{html.escape(label)}</small></b>"
+        for value, label in metrics
+    )
     comparison_html = ""
     if comparison and comparison.get("baseline"):
         counts = comparison["counts"]
@@ -436,8 +461,6 @@ header{{border-bottom:4px solid var(--brand);padding-bottom:18px}}h1{{margin:5px
 table{{width:100%;border-collapse:collapse;margin-top:14px;font-size:12px}}th{{background:var(--brand);color:white;text-align:left}}th,td{{padding:9px;border:1px solid #dce7e0;vertical-align:top}}
 @media(max-width:700px){{main{{margin:0;border-radius:0;padding:16px}}.metrics{{grid-template-columns:repeat(2,1fr)}}table{{display:block;overflow:auto}}}}</style></head>
 <body><main><header><small>{agency}</small><h1>{title}</h1><p>{html.escape(scan['url'])} · {html.escape(scan['created_at'])}</p></header>
-<section><h2>Scan summary</h2><div class="metrics"><b>{summary.get('health_score', '-')}<small>Health score</small></b>
-<b>{summary.get('pages_scanned', 0)}<small>Pages scanned</small></b><b>{len(scan.get('issue_groups', []))}<small>Root causes</small></b>
-<b>{summary.get('actionable_failed_requests', summary.get('failed_requests', 0))}<small>Request failures</small></b></div></section>
+<section><h2>Scan summary</h2><div class="metrics">{metrics_html}</div></section>
 {comparison_html}<section><h2>{kind.title()} findings</h2><table><thead><tr>{table_header}</tr></thead><tbody>{table_rows}</tbody></table></section>
 <p><small>Generated {datetime.now().astimezone().isoformat(timespec='seconds')} · Read-only BugBuster report</small></p></main></body></html>"""

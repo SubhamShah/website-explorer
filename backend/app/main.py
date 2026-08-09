@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 from . import store
 from .crawler import SCREENSHOTS, calculate_health_score, cancel_scan, normalize_url, start_scan
-from .insights import compare_issue_groups
+from .insights import build_issue_groups, compare_issue_groups
 from .quality import DEFAULT_CONTENT_CHECKS
 from .reports import REPORT_KINDS, build_csv, build_html, build_pdf, build_xlsx, report_filename
 
@@ -35,12 +35,27 @@ class ContentChecks(BaseModel):
     short_content_words: int = Field(default=100, ge=20, le=500)
 
 
+class ScanOptions(BaseModel):
+    page_health: bool = True
+    performance: bool = True
+    seo: bool = True
+    content_quality: bool = True
+    screenshots: bool = True
+    responsive: bool = False
+    accessibility: bool = False
+    console: bool = False
+    network: bool = False
+    sitemap_indexing: bool = False
+    template_intelligence: bool = False
+
+
 class ScanRequest(BaseModel):
     url: str
     authorized: bool
     max_pages: int = Field(default=25, ge=1, le=250)
     max_depth: int = Field(default=3, ge=0, le=8)
     content_checks: ContentChecks = Field(default_factory=ContentChecks)
+    scan_options: ScanOptions = Field(default_factory=ScanOptions)
 
 
 class PagePriorityRequest(BaseModel):
@@ -70,7 +85,10 @@ def report_comparison(scan: dict, comparison_scan_id: str | None) -> dict | None
         raise HTTPException(404, "Comparison scan not found.")
     if baseline["url"] != scan["url"]:
         raise HTTPException(400, "Reports can only compare scans of the same normalized website URL.")
-    comparison = compare_issue_groups(scan.get("issue_groups", []), baseline.get("issue_groups", []))
+    scoped_baseline_groups = build_issue_groups(
+        store.filter_findings_for_scope(baseline.get("findings", []), scan)
+    )
+    comparison = compare_issue_groups(scan.get("issue_groups", []), scoped_baseline_groups)
     comparison["baseline"] = {
         "id": baseline["id"],
         "created_at": baseline["created_at"],
@@ -104,8 +122,18 @@ async def create_scan(request: ScanRequest) -> dict:
     except ValueError:
         raise HTTPException(400, "The URL contains an invalid port.") from None
     content_checks = {**DEFAULT_CONTENT_CHECKS, **request.content_checks.model_dump()}
-    scan = store.create_scan(normalized_url, request.max_pages, request.max_depth, content_checks)
-    start_scan(scan["id"], scan["url"], scan["max_pages"], scan["max_depth"], content_checks)
+    scan_options = request.scan_options.model_dump()
+    scan = store.create_scan(
+        normalized_url,
+        request.max_pages,
+        request.max_depth,
+        content_checks,
+        scan_options,
+    )
+    start_scan(
+        scan["id"], scan["url"], scan["max_pages"], scan["max_depth"],
+        content_checks, scan_options,
+    )
     return scan
 
 

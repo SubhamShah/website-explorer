@@ -21,7 +21,8 @@ def connection() -> Iterator[sqlite3.Connection]:
         max_pages INTEGER NOT NULL, max_depth INTEGER NOT NULL,
         created_at TEXT NOT NULL, completed_at TEXT, summary_json TEXT NOT NULL DEFAULT '{}', error TEXT,
         agency_name TEXT, report_title TEXT, brand_color TEXT NOT NULL DEFAULT '#187249',
-        content_checks_json TEXT NOT NULL DEFAULT '{}', site_analysis_json TEXT NOT NULL DEFAULT '{}'
+        content_checks_json TEXT NOT NULL DEFAULT '{}', scan_options_json TEXT NOT NULL DEFAULT '{}',
+        site_analysis_json TEXT NOT NULL DEFAULT '{}'
     )""")
     conn.execute("""CREATE TABLE IF NOT EXISTS pages (
         id TEXT PRIMARY KEY, scan_id TEXT NOT NULL, url TEXT NOT NULL, status INTEGER,
@@ -69,6 +70,7 @@ def connection() -> Iterator[sqlite3.Connection]:
         "report_title": "ALTER TABLE scans ADD COLUMN report_title TEXT",
         "brand_color": "ALTER TABLE scans ADD COLUMN brand_color TEXT NOT NULL DEFAULT '#187249'",
         "content_checks_json": "ALTER TABLE scans ADD COLUMN content_checks_json TEXT NOT NULL DEFAULT '{}'",
+        "scan_options_json": "ALTER TABLE scans ADD COLUMN scan_options_json TEXT NOT NULL DEFAULT '{}'",
         "site_analysis_json": "ALTER TABLE scans ADD COLUMN site_analysis_json TEXT NOT NULL DEFAULT '{}'",
     }
     for column, statement in scan_migrations.items():
@@ -109,20 +111,40 @@ def connection() -> Iterator[sqlite3.Connection]:
 
 def row_to_dict(row: sqlite3.Row) -> dict:
     result = dict(row)
-    for key in ("summary_json", "console_json", "network_json", "links_json", "redirect_chain_json", "metadata_json", "responsive_json", "quality_json", "content_checks_json", "site_analysis_json"):
+    for key in ("summary_json", "console_json", "network_json", "links_json", "redirect_chain_json", "metadata_json", "responsive_json", "quality_json", "content_checks_json", "scan_options_json", "site_analysis_json"):
         if key in result:
             raw_value = result.pop(key)
-            fallback = "{}" if key in {"summary_json", "metadata_json", "responsive_json", "quality_json", "content_checks_json", "site_analysis_json"} else "[]"
+            fallback = "{}" if key in {"summary_json", "metadata_json", "responsive_json", "quality_json", "content_checks_json", "scan_options_json", "site_analysis_json"} else "[]"
             result[key.removesuffix("_json")] = json.loads(raw_value or fallback)
     return result
 
 
-def create_scan(url: str, max_pages: int, max_depth: int, content_checks: dict | None = None) -> dict:
+def create_scan(
+    url: str,
+    max_pages: int,
+    max_depth: int,
+    content_checks: dict | None = None,
+    scan_options: dict | None = None,
+) -> dict:
     from datetime import datetime, timezone
-    scan = {"id": str(uuid4()), "url": url, "status": "queued", "max_pages": max_pages, "max_depth": max_depth, "created_at": datetime.now(timezone.utc).isoformat(), "content_checks_json": json.dumps(content_checks or {})}
+    scan = {
+        "id": str(uuid4()), "url": url, "status": "queued",
+        "max_pages": max_pages, "max_depth": max_depth,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "content_checks_json": json.dumps(content_checks or {}),
+        "scan_options_json": json.dumps(scan_options or {}),
+    }
     with connection() as conn:
-        conn.execute("INSERT INTO scans(id,url,status,max_pages,max_depth,created_at,content_checks_json) VALUES(:id,:url,:status,:max_pages,:max_depth,:created_at,:content_checks_json)", scan)
+        conn.execute(
+            """INSERT INTO scans(
+                id,url,status,max_pages,max_depth,created_at,content_checks_json,scan_options_json
+            ) VALUES(
+                :id,:url,:status,:max_pages,:max_depth,:created_at,:content_checks_json,:scan_options_json
+            )""",
+            scan,
+        )
     scan["content_checks"] = json.loads(scan.pop("content_checks_json"))
+    scan["scan_options"] = json.loads(scan.pop("scan_options_json"))
     return scan
 
 
@@ -263,7 +285,7 @@ def scan_status(scan_id: str) -> dict | None:
         key: scan.get(key)
         for key in (
             "id", "url", "status", "max_pages", "max_depth", "created_at",
-            "completed_at", "summary", "error",
+            "completed_at", "summary", "error", "scan_options",
         )
     }
 
@@ -384,6 +406,56 @@ def page_details(scan_id: str, page_id: str) -> dict | None:
     return page
 
 
+def finding_enabled_for_scope(finding: dict, scan: dict) -> bool:
+    options = scan.get("scan_options") or {}
+    if not options:
+        return True
+    category = finding.get("category")
+    category_option = {
+        "page": "page_health",
+        "crawler": "page_health",
+        "robots": "page_health",
+        "performance": "performance",
+        "seo": "seo",
+        "content": "content_quality",
+        "responsive": "responsive",
+        "accessibility": "accessibility",
+        "console": "console",
+        "network": "network",
+    }.get(category)
+    if category_option and not options.get(category_option, False):
+        return False
+    if category == "indexing" and not (
+        options.get("sitemap_indexing", False)
+        or (
+            options.get("content_quality", False)
+            and (scan.get("content_checks") or {}).get("canonical_tags", True)
+        )
+    ):
+        return False
+    if category != "content":
+        return True
+    title = str(finding.get("title", "")).lower()
+    checks = scan.get("content_checks") or {}
+    title_checks = {
+        "duplicate page title": "duplicate_titles",
+        "duplicate meta description": "duplicate_descriptions",
+        "missing h1 heading": "headings",
+        "multiple h1 headings": "headings",
+        "broken internal link": "broken_internal_links",
+        "page has almost no content": "empty_pages",
+        "placeholder text is visible": "placeholder_text",
+        "extremely short content": "short_content",
+        "images are missing alternative text": "missing_image_alt",
+    }
+    check = title_checks.get(title)
+    return checks.get(check, True) if check else True
+
+
+def filter_findings_for_scope(findings: list[dict], scan: dict) -> list[dict]:
+    return [finding for finding in findings if finding_enabled_for_scope(finding, scan)]
+
+
 def scan_overview(scan_id: str) -> dict | None:
     scan = get_scan(scan_id)
     if not scan:
@@ -421,9 +493,10 @@ def scan_overview(scan_id: str) -> dict | None:
     scan["page_count"] = len(priorities)
     scan["finding_count"] = len(findings)
     if baseline and scan["status"] == "completed":
-        baseline_groups = build_issue_groups(
-            [enrich_finding(row_to_dict(row)) for row in baseline_findings]
-        )
+        baseline_groups = build_issue_groups(filter_findings_for_scope(
+            [enrich_finding(row_to_dict(row)) for row in baseline_findings],
+            scan,
+        ))
         comparison = compare_issue_groups(scan["issue_groups"], baseline_groups)
         baseline_summary = json.loads(baseline["summary_json"] or "{}")
         comparison["baseline"] = {
@@ -533,7 +606,10 @@ def scan_details(scan_id: str) -> dict | None:
     scan["findings"] = attach_discovery_sources(scan["pages"], enriched_findings)
     scan["issue_groups"] = build_issue_groups(scan["findings"])
     if baseline and scan["status"] == "completed":
-        baseline_groups = build_issue_groups([enrich_finding(row_to_dict(row)) for row in baseline_findings])
+        baseline_groups = build_issue_groups(filter_findings_for_scope(
+            [enrich_finding(row_to_dict(row)) for row in baseline_findings],
+            scan,
+        ))
         comparison = compare_issue_groups(scan["issue_groups"], baseline_groups)
         baseline_summary = json.loads(baseline["summary_json"] or "{}")
         comparison["baseline"] = {

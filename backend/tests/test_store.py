@@ -300,6 +300,7 @@ class DeleteScanTests(unittest.TestCase):
             3,
             1,
             {"duplicate_titles": False, "short_content_words": 150},
+            {"network": True, "accessibility": False, "content_quality": True},
         )
         store.update_scan(
             scan["id"],
@@ -310,7 +311,31 @@ class DeleteScanTests(unittest.TestCase):
 
         self.assertFalse(saved["content_checks"]["duplicate_titles"])
         self.assertEqual(saved["content_checks"]["short_content_words"], 150)
+        self.assertTrue(saved["scan_options"]["network"])
+        self.assertFalse(saved["scan_options"]["accessibility"])
         self.assertEqual(saved["site_analysis"]["sitemap_url_count"], 12)
+
+    def test_comparison_scope_excludes_checks_not_selected_for_current_scan(self) -> None:
+        scan = {
+            "scan_options": {
+                "page_health": True,
+                "content_quality": True,
+                "network": False,
+                "accessibility": False,
+                "sitemap_indexing": False,
+            },
+            "content_checks": {"headings": False, "canonical_tags": False},
+        }
+        findings = [
+            {"category": "network", "title": "API request failed"},
+            {"category": "accessibility", "title": "Accessibility: Button name"},
+            {"category": "content", "title": "Missing H1 heading"},
+            {"category": "page", "title": "Page could not be loaded"},
+        ]
+
+        scoped = store.filter_findings_for_scope(findings, scan)
+
+        self.assertEqual(scoped, [{"category": "page", "title": "Page could not be loaded"}])
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ from app.main import (
     shared_report,
     update_page_priority,
     update_report_settings,
+    ScanRequest,
 )
 
 
@@ -108,6 +109,17 @@ class ReportApiTests(unittest.TestCase):
 
         self.assertIsNone(report_comparison(scan, None))
         self.assertEqual(report_comparison(scan, "__previous__"), scan["comparison"])
+
+    def test_nontechnical_scan_defaults_keep_advanced_checks_optional(self) -> None:
+        request = ScanRequest(url="https://example.com", authorized=True)
+
+        self.assertTrue(request.scan_options.page_health)
+        self.assertTrue(request.scan_options.content_quality)
+        self.assertTrue(request.scan_options.screenshots)
+        self.assertFalse(request.scan_options.accessibility)
+        self.assertFalse(request.scan_options.network)
+        self.assertFalse(request.scan_options.console)
+        self.assertFalse(request.scan_options.sitemap_indexing)
 
 
 if __name__ == "__main__":

@@ -51,6 +51,8 @@ npm run build
 ## MVP capabilities
 
 - Add an authorized website URL and scan limits.
+- Choose scan coverage before starting. Common checks are recommended by default, while responsive testing, accessibility/ARIA, console messages, network/API recording, sitemap/indexing, and template intelligence are opt-in.
+- Unchecked result categories are not collected and do not appear in the dashboard or generated reports. Content-quality checks have their own detailed checkboxes.
 - Crawl same-domain pages with Playwright.
 - Capture screenshots, console errors, complete network activity, titles, H1s, and meta descriptions.
 - Report broken links, failed page loads, page metadata issues, console/network errors, and slow pages.

@@ -6,48 +6,306 @@
   background: linear-gradient(145deg, #f8fcf9, #f0f7f3);
 }
 
-.content-check-settings {
-  grid-column: 1 / -1;
-  padding: 10px 12px;
-  border: 1px solid #d9e7de;
-  border-radius: 10px;
-  background: #f8fbf9;
+/* Shared BugBuster Labs button system. The scan CTA keeps its branded logo treatment. */
+button:not(:where(.scan-start-button, .scan, .page-row)) {
+  border: 1px solid #0f5d39;
+  border-radius: 11px;
+  background: linear-gradient(135deg, #155f3d 0%, #218554 100%);
+  box-shadow: 0 5px 13px #104b3024, inset 0 1px #ffffff30;
+  color: #fff;
+  font-family: Inter, "Segoe UI", sans-serif;
+  font-weight: 800;
+  letter-spacing: .005em;
+  transition: border-color .18s ease, box-shadow .18s ease, color .18s ease, background .18s ease, transform .18s ease, filter .18s ease;
 }
 
-.content-check-settings summary {
-  color: #315b49;
+button:not(:where(.scan-start-button, .scan, .page-row)):not(:disabled):hover {
+  border-color: #0c4d30;
+  background: linear-gradient(135deg, #104d31 0%, #187249 100%);
+  box-shadow: 0 8px 18px #104b3030, inset 0 1px #ffffff38;
+  filter: saturate(1.05);
+  transform: translateY(-1px);
+}
+
+button:not(:where(.scan-start-button, .scan, .page-row)):not(:disabled):active {
+  box-shadow: 0 3px 8px #104b3026, inset 0 1px 2px #0b432b45;
+  transform: translateY(0);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  filter: grayscale(.12);
+}
+
+button.secondary,
+.coverage-actions button,
+button.load-more {
+  border-color: #b5d4c1;
+  background: linear-gradient(145deg, #ffffff 0%, #eaf5ee 100%);
+  box-shadow: 0 3px 9px #104b3017, inset 0 1px #fff;
+  color: #176940;
+}
+
+button.secondary:not(:disabled):hover,
+.coverage-actions button:not(:disabled):hover,
+button.load-more:not(:disabled):hover {
+  border-color: #72ae89;
+  background: linear-gradient(145deg, #f7fcf9 0%, #dceee3 100%);
+  box-shadow: 0 6px 14px #104b3021, inset 0 1px #fff;
+  color: #105d37;
+}
+
+.coverage-actions button {
+  min-height: 34px;
+  padding: 7px 12px;
+  border-radius: 9px;
+  font-size: 11px;
+}
+
+.page-stepper button {
+  border-color: #c4dbcd;
+  border-radius: 8px;
+  background: linear-gradient(145deg, #ffffff, #eaf5ee);
+  box-shadow: 0 2px 6px #104b3017;
+  color: #176940;
+}
+
+.page-stepper button:not(:disabled):hover {
+  border-color: #72ae89;
+  background: #dceee3;
+  color: #0f5d39;
+}
+
+button.scan-delete {
+  width: auto;
+  min-width: 68px;
+  height: 36px;
+  margin-right: 6px;
+  padding: 0 12px;
+  border-color: #efc1c1;
+  border-radius: 10px;
+  background: linear-gradient(145deg, #fff, #fff0f0);
+  box-shadow: 0 3px 8px #7e202016;
+  color: #a53636;
+}
+
+button.scan-delete:not(:disabled):hover {
+  border-color: #dc8d8d;
+  background: linear-gradient(145deg, #fff7f7, #ffe3e3);
+  box-shadow: 0 6px 13px #7e202022;
+  color: #8e2222;
+}
+
+button.link-button {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  color: #187249;
+}
+
+button.link-button:not(:disabled):hover {
+  border-color: #c8dfd1;
+  background: #eef8f1;
+  box-shadow: none;
+  color: #105d37;
+}
+
+button.scan,
+button.page-row {
+  font-family: Inter, "Segoe UI", sans-serif;
+  transition: border-color .18s ease, background .18s ease, box-shadow .18s ease, transform .18s ease;
+}
+
+button.scan:not(:disabled):hover,
+button.page-row:not(:disabled):hover {
+  border-color: #9bc7ad;
+  background: linear-gradient(145deg, #fbfefc, #edf7f1);
+  box-shadow: 0 4px 11px #104b3015;
+  transform: translateY(-1px);
+}
+
+.scan-coverage-settings {
+  grid-column: 1 / -1;
+  min-width: 0;
+  margin: 0;
+  padding: 18px;
+  border: 1px solid #cfe1d5;
+  border-radius: 12px;
+  background: #f6faf7;
+}
+
+.scan-coverage-settings legend {
+  padding: 0 6px;
+  color: #173f2c;
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.coverage-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 15px;
+}
+
+.coverage-heading p {
+  max-width: 650px;
+  margin: 0;
+  color: #60766b;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.coverage-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.coverage-actions button {
+  padding: 7px 10px;
+  border: 1px solid #bdd7c7;
+  border-radius: 6px;
+  background: #fff;
+  color: #286448;
   cursor: pointer;
-  font-size: 12px;
+  font: inherit;
+  font-size: 11px;
   font-weight: 800;
 }
 
-.content-check-settings summary span {
+.coverage-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.coverage-option {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 11px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid #dce7e0;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.coverage-option.selected {
+  border-color: #65aa82;
+  box-shadow: inset 3px 0 #278155;
+  background: #f0f8f3;
+}
+
+.coverage-option input[type="checkbox"] {
+  width: 17px;
+  height: 17px;
+  margin-top: 1px;
+  accent-color: #237d4e;
+}
+
+.coverage-option > span {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.coverage-option b {
+  color: #244b38;
+  font-size: 14px;
+}
+
+.coverage-option small {
+  color: #6c7f76;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.coverage-option em {
+  padding: 4px 7px;
+  border-radius: 8px;
+  background: #edf2ef;
+  color: #708078;
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 900;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.coverage-option.selected em {
+  background: #dcefe3;
+  color: #276b49;
+}
+
+.content-coverage-option {
+  display: block;
+  grid-column: 1 / -1;
+  padding: 0;
+  cursor: default;
+}
+
+.coverage-option-main {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 11px;
+  padding: 14px;
+  cursor: pointer;
+}
+
+.coverage-option-main > span {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.embedded-content-settings {
+  margin: 0 14px 14px;
+  padding: 14px 16px;
+  border: 1px solid #cfe2d6;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.embedded-content-settings summary {
+  color: #315b49;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.embedded-content-settings summary span {
   margin-left: 6px;
   color: #71847b;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 500;
 }
 
 .check-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  margin-top: 12px;
+  gap: 10px;
+  margin-top: 14px;
 }
 
-.start-card .check-grid > label {
+.scan-options-card .check-grid > label {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 8px;
+  gap: 9px;
+  padding: 11px;
   border: 1px solid #e1ebe4;
   border-radius: 7px;
   background: #fff;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
 }
 
-.start-card .check-grid .word-threshold {
+.scan-options-card .check-grid .word-threshold {
   display: grid;
   grid-template-columns: 1fr 68px auto;
 }
@@ -1436,6 +1694,14 @@
 }
 
 @media (max-width: 620px) {
+  .coverage-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .coverage-grid {
+    grid-template-columns: 1fr;
+  }
   .comparison-panel.first-baseline {
     grid-template-columns: 1fr;
   }
@@ -1526,4 +1792,72 @@
     align-items: flex-start;
     flex-direction: column;
   }
+}
+
+/* Keep shared action styling last so component rules cannot flatten the brand treatment. */
+.coverage-actions button {
+  min-height: 34px;
+  padding: 7px 12px;
+  border: 1px solid #b5d4c1;
+  border-radius: 9px;
+  background: linear-gradient(145deg, #ffffff, #eaf5ee);
+  box-shadow: 0 3px 9px #104b3017, inset 0 1px #fff;
+  color: #176940;
+}
+
+.coverage-actions button:not(:disabled):hover {
+  border-color: #72ae89;
+  background: linear-gradient(145deg, #f7fcf9, #dceee3);
+  box-shadow: 0 6px 14px #104b3021, inset 0 1px #fff;
+  color: #105d37;
+}
+
+.view-switch button {
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+  color: #60766b;
+}
+
+.view-switch button:not(:disabled):hover {
+  border-color: #c8dfd1;
+  background: #f8fcf9;
+  box-shadow: none;
+  color: #176940;
+  transform: none;
+}
+
+.view-switch button.active,
+.view-switch button.active:not(:disabled):hover {
+  border-color: #166d43;
+  background: linear-gradient(135deg, #155f3d, #218554);
+  box-shadow: 0 3px 8px #104b3028, inset 0 1px #ffffff2e;
+  color: #fff;
+}
+
+.report-downloads a {
+  border-radius: 10px;
+  background: linear-gradient(145deg, #ffffff, #eaf5ee);
+  box-shadow: 0 3px 9px #104b3017;
+  transition: border-color .18s ease, box-shadow .18s ease, background .18s ease, transform .18s ease;
+}
+
+.report-downloads a:first-child {
+  border-color: #0f5d39;
+  background: linear-gradient(135deg, #155f3d, #218554);
+  box-shadow: 0 5px 13px #104b3024, inset 0 1px #ffffff30;
+}
+
+.report-downloads a:hover {
+  border-color: #72ae89;
+  background: linear-gradient(145deg, #f7fcf9, #dceee3);
+  box-shadow: 0 6px 14px #104b3021;
+  transform: translateY(-1px);
+}
+
+.report-downloads a:first-child:hover {
+  border-color: #0c4d30;
+  background: linear-gradient(135deg, #104d31, #187249);
+  box-shadow: 0 8px 18px #104b3030, inset 0 1px #ffffff38;
 }

@@ -595,6 +595,23 @@ button.page-row:not(:disabled):hover {
   color: #71847b;
 }
 
+.score-comparison {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 13px 0;
+  padding: 10px 12px;
+  border: 1px solid #c9dfd2;
+  border-radius: 10px;
+  background: #f4faf6;
+}
+
+.score-comparison b { color: #176940; font-size: 12px; }
+.score-comparison span { color: #60766b; font-size: 10px; text-align: right; }
+.score-comparison.incompatible { border-color: #dfd8c4; background: #fbf8ef; }
+.score-comparison.incompatible b { color: #765a1d; }
+
 .comparison-counts {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1711,10 +1728,13 @@ button.page-row:not(:disabled):hover {
   }
 
   .comparison-heading,
+  .score-comparison,
   .issue-title-row {
     align-items: flex-start;
     flex-direction: column;
   }
+
+  .score-comparison span { text-align: left; }
 
   .guidance-grid {
     grid-template-columns: 1fr;

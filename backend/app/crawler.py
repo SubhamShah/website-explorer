@@ -13,6 +13,7 @@ from playwright.async_api import async_playwright
 
 from . import store
 from .accessibility import load_axe_source, run_accessibility_scan
+from .health import calculate_health_score, health_summary_payload
 from .quality import (
     DEFAULT_CONTENT_CHECKS,
     PLACEHOLDER_PATTERN,
@@ -324,34 +325,6 @@ def console_finding(page_url: str, item: dict) -> dict:
     }
 
 
-def calculate_health_score(
-    findings: list[dict],
-    pages_scanned: int,
-    network_requests: int,
-    failed_requests: int,
-) -> tuple[int, dict[str, float]]:
-    """Score five normalized quality dimensions so large scans are not penalized for size alone."""
-    page_total = max(1, pages_scanned)
-    page_issues = sum(item.get("category") == "page" and item.get("severity") != "info" for item in findings)
-    console_issues = sum(
-        item.get("category") == "console"
-        and item.get("severity") in {"medium", "high", "critical"}
-        and not item.get("related_request_url")
-        for item in findings
-    )
-    seo_issues = sum(item.get("category") == "seo" for item in findings)
-    performance_issues = sum(item.get("category") == "performance" for item in findings)
-    penalties = {
-        "page_reliability": min(30.0, page_issues / page_total * 30.0),
-        "network_failures": min(20.0, failed_requests / max(1, network_requests) * 200.0),
-        "console_issues": min(15.0, console_issues / page_total * 7.5),
-        "seo_coverage": min(20.0, seo_issues / (page_total * 3) * 20.0),
-        "slow_pages": min(15.0, performance_issues / page_total * 15.0),
-    }
-    rounded_penalties = {key: round(value, 1) for key, value in penalties.items()}
-    return round(max(0.0, 100.0 - sum(penalties.values()))), rounded_penalties
-
-
 async def load_robots_policy(context: object, root_url: str) -> RobotsPolicy:
     robots_url = urljoin(f"{site_origin(root_url)}/", "robots.txt")
     try:
@@ -406,7 +379,10 @@ async def scan_website(
     options = {**DEFAULT_SCAN_OPTIONS, **(scan_options or {})}
     score_enabled = any(
         options[key]
-        for key in ("page_health", "performance", "seo", "console", "network")
+        for key in (
+            "page_health", "performance", "seo", "content_quality", "responsive",
+            "accessibility", "console", "network", "sitemap_indexing",
+        )
     )
     settings = {**DEFAULT_CONTENT_CHECKS, **(content_checks or {})}
     if not options["content_quality"]:
@@ -819,11 +795,15 @@ async def scan_website(
                 actionable_failed_request_count += page_actionable_failures
                 ignored_failed_request_count += page_failed_requests - page_actionable_failures
                 passed_request_count += len(network) - page_failed_requests
-                live_score, live_breakdown = calculate_health_score(
+                live_score, live_health = calculate_health_score(
                     findings,
                     page_count,
                     network_request_count,
                     actionable_failed_request_count,
+                    page_priorities=store.page_priority_map(scan_id),
+                    scan_options=options,
+                    content_checks=settings,
+                    max_pages=max_pages,
                 )
                 store.update_scan(
                     scan_id,
@@ -838,9 +818,7 @@ async def scan_website(
                         "api_requests": api_request_count,
                         "passed_requests": passed_request_count,
                         "timeouts": timeout_count,
-                        "health_score": live_score if score_enabled else None,
-                        "health_score_available": score_enabled,
-                        "health_breakdown": live_breakdown,
+                        **health_summary_payload(live_score, live_health, score_enabled),
                         "responsive_viewports": responsive_viewport_count,
                         "responsive_issues": sum(item.get("category") == "responsive" for item in findings),
                         "accessibility_issues": sum(
@@ -885,11 +863,15 @@ async def scan_website(
 
         for finding in findings:
             store.save_finding(scan_id, finding)
-        score, health_breakdown = calculate_health_score(
+        score, health_details = calculate_health_score(
             findings,
             page_count,
             network_request_count,
             actionable_failed_request_count,
+            page_priorities=store.page_priority_map(scan_id),
+            scan_options=options,
+            content_checks=settings,
+            max_pages=max_pages,
         )
         store.update_scan(
             scan_id,
@@ -913,9 +895,7 @@ async def scan_website(
                 "robots_policy": policy.status,
                 "robots_detail": policy.detail,
                 "rate_limit_ms": policy.rate_limit_ms,
-                "health_score": score if score_enabled else None,
-                "health_score_available": score_enabled,
-                "health_breakdown": health_breakdown,
+                **health_summary_payload(score, health_details, score_enabled),
                 "responsive_viewports": responsive_viewport_count,
                 "responsive_issues": sum(item.get("category") == "responsive" for item in findings),
                 "accessibility_issues": sum(

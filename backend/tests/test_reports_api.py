@@ -121,6 +121,25 @@ class ReportApiTests(unittest.TestCase):
         self.assertFalse(request.scan_options.console)
         self.assertFalse(request.scan_options.sitemap_indexing)
 
+    def test_page_priority_change_recalculates_completed_health_score(self) -> None:
+        store.update_scan(
+            self.scan["id"],
+            status="completed",
+            summary={"pages_scanned": 1, "network_requests": 0, "actionable_failed_requests": 0},
+        )
+        result = update_page_priority(
+            self.scan["id"],
+            PagePriorityRequest(page_url="https://example.com/checkout", priority="critical"),
+        )
+        updated = store.get_scan(self.scan["id"])
+
+        self.assertIsNotNone(result["health_score"])
+        self.assertEqual(updated["summary"]["health_method_version"], "2.0")
+        self.assertEqual(
+            updated["summary"]["health_top_impacts"][0]["priority_multiplier"],
+            3.0,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

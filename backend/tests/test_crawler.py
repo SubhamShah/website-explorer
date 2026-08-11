@@ -151,9 +151,11 @@ class NetworkFindingTests(unittest.TestCase):
 
 class HealthScoreTests(unittest.TestCase):
     def test_healthy_scan_scores_100(self) -> None:
-        score, breakdown = calculate_health_score([], 20, 1000, 0)
+        score, details = calculate_health_score([], 20, 1000, 0, max_pages=25)
         self.assertEqual(score, 100)
-        self.assertEqual(sum(breakdown.values()), 0)
+        self.assertEqual(sum(details["deductions"].values()), 0)
+        self.assertEqual(details["method_version"], "2.0")
+        self.assertEqual(details["coverage"]["confidence"], "comprehensive")
 
     def test_score_is_normalized_by_scan_size_and_request_volume(self) -> None:
         findings = [
@@ -162,10 +164,10 @@ class HealthScoreTests(unittest.TestCase):
             {"category": "performance", "severity": "medium"},
             {"category": "page", "severity": "high"},
         ]
-        score, breakdown = calculate_health_score(findings, 20, 1000, 17)
+        score, details = calculate_health_score(findings, 20, 1000, 17)
         self.assertGreater(score, 0)
         self.assertLess(score, 100)
-        self.assertEqual(breakdown["network_failures"], 3.4)
+        self.assertGreater(details["categories"]["reliability"]["deduction"], 0)
 
     def test_correlated_console_message_is_not_penalized_twice(self) -> None:
         related = {
@@ -173,9 +175,46 @@ class HealthScoreTests(unittest.TestCase):
             "severity": "high",
             "related_request_url": "https://example.com/app.js",
         }
-        score, breakdown = calculate_health_score([related], 1, 1, 1)
-        self.assertEqual(breakdown["console_issues"], 0)
-        self.assertEqual(score, 80)
+        score, details = calculate_health_score([related], 1, 1, 1)
+        self.assertEqual(details["categories"]["reliability"]["finding_count"], 1)
+        self.assertLess(score, 100)
+
+    def test_severity_and_page_importance_increase_business_impact(self) -> None:
+        standard_score, _ = calculate_health_score(
+            [{"category": "page", "severity": "low", "page_url": "https://example.com/blog/news"}],
+            20,
+        )
+        critical_score, details = calculate_health_score(
+            [{"category": "page", "severity": "critical", "page_url": "https://example.com/checkout"}],
+            20,
+        )
+        self.assertLess(critical_score, standard_score)
+        self.assertEqual(details["top_impacts"][0]["priority_multiplier"], 3.0)
+
+    def test_unselected_categories_do_not_change_the_score(self) -> None:
+        options = {
+            "page_health": True,
+            "network": False,
+            "console": False,
+            "performance": False,
+            "seo": False,
+            "sitemap_indexing": False,
+            "accessibility": False,
+            "content_quality": False,
+            "responsive": False,
+        }
+        score, details = calculate_health_score(
+            [{"category": "accessibility", "severity": "critical", "page_url": "https://example.com"}],
+            5,
+            scan_options=options,
+        )
+        self.assertEqual(score, 100)
+        self.assertFalse(details["categories"]["accessibility"]["checked"])
+        self.assertEqual(details["coverage"]["confidence"], "focused")
+
+    def test_reaching_the_page_limit_marks_coverage_limited(self) -> None:
+        _, details = calculate_health_score([], 25, max_pages=25)
+        self.assertEqual(details["coverage"]["confidence"], "limited")
 
 
 class ConsoleFindingTests(unittest.TestCase):

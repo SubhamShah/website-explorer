@@ -36,7 +36,16 @@ def sample_scan() -> dict:
         "agency_name": "Quality Agency",
         "report_title": "Release readiness",
         "brand_color": "#123456",
-        "summary": {"health_score": 72, "pages_scanned": 10, "actionable_failed_requests": 1},
+        "summary": {
+            "health_score": 72,
+            "pages_scanned": 10,
+            "actionable_failed_requests": 1,
+            "health_categories": {
+                "reliability": {"label": "Reliability", "score": 54, "checked": True},
+                "accessibility": {"label": "Accessibility", "score": None, "checked": False},
+            },
+            "health_coverage": {"scope_percent": 65, "confidence": "standard"},
+        },
         "issue_groups": [group],
         "findings": [finding],
     }
@@ -103,6 +112,8 @@ class ReportExportTests(unittest.TestCase):
         self.assertIn("Quality Agency", document)
         self.assertIn("#123456", document)
         self.assertIn('name="robots" content="noindex,nofollow"', document)
+        self.assertIn("BugBuster health breakdown", document)
+        self.assertIn("Reliability", document)
         self.assertIn("Read-only BugBuster report", document)
 
     def test_comparison_status_is_included_in_export(self) -> None:

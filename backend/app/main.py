@@ -11,7 +11,13 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import store
-from .crawler import SCREENSHOTS, calculate_health_score, cancel_scan, normalize_url, start_scan
+from .crawler import SCREENSHOTS, cancel_scan, normalize_url, start_scan
+from .health import (
+    HEALTH_METHOD_VERSION,
+    calculate_health_score,
+    category_coverage,
+    health_summary_payload,
+)
 from .insights import build_issue_groups, compare_issue_groups
 from .quality import DEFAULT_CONTENT_CHECKS
 from .reports import REPORT_KINDS, build_csv, build_html, build_pdf, build_xlsx, report_filename
@@ -95,7 +101,31 @@ def report_comparison(scan: dict, comparison_scan_id: str | None) -> dict | None
         "completed_at": baseline.get("completed_at"),
         "health_score": baseline.get("summary", {}).get("health_score"),
     }
+    comparison["score"] = store.score_comparison(scan, baseline)
     return comparison
+
+
+def recalculate_scan_health(scan_id: str) -> dict:
+    scan = store.scan_details(scan_id)
+    if not scan:
+        raise HTTPException(404, "Scan not found.")
+    summary = dict(scan.get("summary") or {})
+    options = scan.get("scan_options") or {}
+    checks = scan.get("content_checks") or {}
+    score, details = calculate_health_score(
+        scan.get("findings", []),
+        summary.get("pages_scanned", len(scan.get("pages", []))),
+        summary.get("network_requests", 0),
+        summary.get("actionable_failed_requests", summary.get("failed_requests", 0)),
+        page_priorities={page["url"]: page.get("priority", "standard") for page in scan.get("pages", [])},
+        scan_options=options,
+        content_checks=checks,
+        max_pages=scan.get("max_pages"),
+    )
+    score_enabled = any(value > 0 for value in category_coverage(options, checks).values())
+    summary.update(health_summary_payload(score, details, score_enabled))
+    store.update_scan(scan_id, summary=summary)
+    return summary
 
 
 @app.get("/health")
@@ -139,22 +169,15 @@ async def create_scan(request: ScanRequest) -> dict:
 
 @app.get("/api/scans/{scan_id}")
 def get_scan(scan_id: str) -> dict:
-    scan = store.scan_overview(scan_id)
-    if not scan:
+    stored_scan = store.get_scan(scan_id)
+    if not stored_scan:
         raise HTTPException(404, "Scan not found.")
-    if scan["status"] == "completed" and "health_breakdown" not in scan["summary"]:
-        complete_scan = store.scan_details(scan_id)
-        summary = scan["summary"]
-        score, breakdown = calculate_health_score(
-            complete_scan["findings"],
-            summary.get("pages_scanned", len(complete_scan["pages"])),
-            summary.get("network_requests", 0),
-            summary.get("actionable_failed_requests", summary.get("failed_requests", 0)),
-        )
-        summary["health_score"] = score
-        summary["health_breakdown"] = breakdown
-        store.update_scan(scan_id, summary=summary)
-    return scan
+    if (
+        stored_scan["status"] == "completed"
+        and stored_scan.get("summary", {}).get("health_method_version") != HEALTH_METHOD_VERSION
+    ):
+        recalculate_scan_health(scan_id)
+    return store.scan_overview(scan_id)
 
 
 @app.get("/api/scans/{scan_id}/status")
@@ -206,7 +229,13 @@ def update_page_priority(scan_id: str, request: PagePriorityRequest) -> dict:
         raise HTTPException(400, "Priority must be critical, high_value, or standard.")
     if not store.set_page_priority(scan_id, request.page_url, request.priority):
         raise HTTPException(404, "Scan page not found.")
-    return {"page_url": request.page_url, "priority": request.priority}
+    scan = store.get_scan(scan_id)
+    summary = recalculate_scan_health(scan_id) if scan and scan.get("status") == "completed" else None
+    return {
+        "page_url": request.page_url,
+        "priority": request.priority,
+        "health_score": summary.get("health_score") if summary else None,
+    }
 
 
 @app.put("/api/scans/{scan_id}/report-settings")

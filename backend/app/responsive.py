@@ -10,12 +10,23 @@ VIEWPORTS = (
 LAYOUT_ANALYSIS_SCRIPT = r"""
 () => {
   const width = window.innerWidth;
+  const ancestors = (node) => {
+    const result = [];
+    for (let current = node; current instanceof Element; current = current.parentElement) {
+      result.push(current);
+    }
+    return result;
+  };
   const visible = (node) => {
     if (!(node instanceof Element)) return false;
-    const style = getComputedStyle(node);
     const rect = node.getBoundingClientRect();
-    return style.display !== 'none' && style.visibility !== 'hidden' &&
-      Number(style.opacity || 1) > 0.01 && rect.width > 1 && rect.height > 1;
+    if (rect.width <= 1 || rect.height <= 1) return false;
+    return ancestors(node).every(current => {
+      const style = getComputedStyle(current);
+      return !current.hidden && style.display !== 'none' &&
+        style.visibility !== 'hidden' && style.visibility !== 'collapse' &&
+        Number(style.opacity || 1) > 0.02;
+    });
   };
   const describe = (node) => {
     const id = node.id ? `#${node.id}` : '';
@@ -26,6 +37,35 @@ LAYOUT_ANALYSIS_SCRIPT = r"""
   };
   const all = [...document.querySelectorAll('body *')];
   const visibleNodes = all.filter(visible);
+  const documentWidth = Math.max(document.documentElement.scrollWidth, document.body?.scrollWidth || 0);
+  const clipsHorizontally = (node) => ancestors(node).slice(1).some(ancestor => {
+    const style = getComputedStyle(ancestor);
+    if (!['hidden', 'clip'].includes(style.overflowX)) return false;
+    const outer = ancestor.getBoundingClientRect();
+    const inner = node.getBoundingClientRect();
+    return inner.left < outer.left - 3 || inner.right > outer.right + 3;
+  });
+  const visibleRect = (node) => {
+    const source = node.getBoundingClientRect();
+    const rect = {left: source.left, right: source.right, top: source.top, bottom: source.bottom};
+    for (const ancestor of ancestors(node).slice(1)) {
+      const style = getComputedStyle(ancestor);
+      if (!['hidden', 'clip', 'auto', 'scroll'].includes(style.overflowX) &&
+          !['hidden', 'clip', 'auto', 'scroll'].includes(style.overflowY)) continue;
+      const clip = ancestor.getBoundingClientRect();
+      if (['hidden', 'clip', 'auto', 'scroll'].includes(style.overflowX)) {
+        rect.left = Math.max(rect.left, clip.left);
+        rect.right = Math.min(rect.right, clip.right);
+      }
+      if (['hidden', 'clip', 'auto', 'scroll'].includes(style.overflowY)) {
+        rect.top = Math.max(rect.top, clip.top);
+        rect.bottom = Math.min(rect.bottom, clip.bottom);
+      }
+    }
+    rect.width = Math.max(0, rect.right - rect.left);
+    rect.height = Math.max(0, rect.bottom - rect.top);
+    return rect;
+  };
   const overflowElements = visibleNodes
     .filter(node => {
       const rect = node.getBoundingClientRect();
@@ -45,26 +85,42 @@ LAYOUT_ANALYSIS_SCRIPT = r"""
     .filter(visible)
     .filter(image => {
       const rect = image.getBoundingClientRect();
-      return rect.left < -3 || rect.right > width + 3;
+      const extendsOutside = rect.left < -3 || rect.right > width + 3;
+      // Carousels commonly position upcoming slides beyond their clipped track.
+      // Only report an image when it contributes to real page-level scrolling.
+      return extendsOutside && documentWidth > width + 4 && !clipsHorizontally(image);
     })
     .slice(0, 10)
     .map(describe);
   const interactive = [...document.querySelectorAll(
     'a[href],button,input,select,textarea,[role="button"],[role="link"]'
   )].filter(visible).slice(0, 140);
+  const actionIdentity = (node) => {
+    const href = node instanceof HTMLAnchorElement ? node.href : '';
+    const label = (node.getAttribute('aria-label') || node.textContent || node.getAttribute('name') || '')
+      .trim().replace(/\s+/g, ' ').toLowerCase();
+    return `${node.tagName.toLowerCase()}|${href}|${label}`;
+  };
   const overlaps = [];
   for (let first = 0; first < interactive.length && overlaps.length < 10; first += 1) {
     const a = interactive[first];
-    const ar = a.getBoundingClientRect();
+    const ar = visibleRect(a);
+    if (ar.width <= 1 || ar.height <= 1) continue;
     for (let second = first + 1; second < interactive.length && overlaps.length < 10; second += 1) {
       const b = interactive[second];
       if (a.contains(b) || b.contains(a)) continue;
-      const br = b.getBoundingClientRect();
+      const br = visibleRect(b);
+      if (br.width <= 1 || br.height <= 1) continue;
       const overlapWidth = Math.max(0, Math.min(ar.right, br.right) - Math.max(ar.left, br.left));
       const overlapHeight = Math.max(0, Math.min(ar.bottom, br.bottom) - Math.max(ar.top, br.top));
       const overlapArea = overlapWidth * overlapHeight;
       const smallerArea = Math.min(ar.width * ar.height, br.width * br.height);
-      if (smallerArea > 0 && overlapArea / smallerArea >= 0.25) {
+      const sameAction = actionIdentity(a) === actionIdentity(b);
+      const effectivelyStacked = Math.abs(ar.left - br.left) <= 2 &&
+        Math.abs(ar.top - br.top) <= 2 && Math.abs(ar.width - br.width) <= 2 &&
+        Math.abs(ar.height - br.height) <= 2;
+      if (sameAction && effectivelyStacked) continue;
+      if (overlapWidth >= 8 && overlapHeight >= 8 && smallerArea > 0 && overlapArea / smallerArea >= 0.25) {
         overlaps.push(`${describe(a)} overlaps ${describe(b)}`);
       }
     }
@@ -80,7 +136,7 @@ LAYOUT_ANALYSIS_SCRIPT = r"""
       return matches.length > 0 && !matches.some(visible);
     });
   return {
-    document_width: Math.max(document.documentElement.scrollWidth, document.body?.scrollWidth || 0),
+    document_width: documentWidth,
     viewport_width: width,
     overflow_elements: overflowElements,
     unreadable_text: unreadable,
@@ -164,7 +220,9 @@ def responsive_findings(page_url: str, evidence: dict) -> list[dict]:
                     "detail": f"{viewport} has text below 12px: {'; '.join(result['unreadable_text'][:5])}",
                 }
             )
-        if result.get("images_outside_viewport"):
+        # An image crossing the viewport is actionable only when the document itself
+        # overflows. Clipped carousel slides are intentional and should not affect health.
+        if result.get("images_outside_viewport") and overflow > 4:
             findings.append(
                 {
                     "page_url": page_url,

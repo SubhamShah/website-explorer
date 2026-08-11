@@ -456,6 +456,53 @@ def filter_findings_for_scope(findings: list[dict], scan: dict) -> list[dict]:
     return [finding for finding in findings if finding_enabled_for_scope(finding, scan)]
 
 
+def page_priority_map(scan_id: str) -> dict[str, str]:
+    with connection() as conn:
+        rows = conn.execute("SELECT url,priority FROM pages WHERE scan_id=?", (scan_id,)).fetchall()
+    return {row["url"]: row["priority"] for row in rows}
+
+
+def score_comparison(current: dict, baseline: dict) -> dict:
+    current_summary = current.get("summary") or {}
+    baseline_summary = baseline.get("summary") or {}
+    current_scope = {
+        "max_pages": current.get("max_pages"),
+        "max_depth": current.get("max_depth"),
+        "scan_options": current.get("scan_options") or {},
+        "content_checks": current.get("content_checks") or {},
+    }
+    baseline_scope = {
+        "max_pages": baseline.get("max_pages"),
+        "max_depth": baseline.get("max_depth"),
+        "scan_options": baseline.get("scan_options") or {},
+        "content_checks": baseline.get("content_checks") or {},
+    }
+    same_scope = current_scope == baseline_scope
+    same_method = (
+        current_summary.get("health_method_version")
+        == baseline_summary.get("health_method_version")
+        and current_summary.get("health_method_version") is not None
+    )
+    current_score = current_summary.get("health_score")
+    baseline_score = baseline_summary.get("health_score")
+    compatible = bool(same_scope and same_method and current_score is not None and baseline_score is not None)
+    if not same_scope:
+        reason = "Health-score change is hidden because these scans used different limits or checks."
+    elif not same_method:
+        reason = "Health-score change is hidden because these scans used different scoring versions."
+    elif current_score is None or baseline_score is None:
+        reason = "Health-score change is unavailable because one scan did not calculate a score."
+    else:
+        reason = "Both scans used the same limits, checks, and scoring method."
+    return {
+        "compatible": compatible,
+        "reason": reason,
+        "current_score": current_score,
+        "baseline_score": baseline_score,
+        "change": current_score - baseline_score if compatible else None,
+    }
+
+
 def scan_overview(scan_id: str) -> dict | None:
     scan = get_scan(scan_id)
     if not scan:
@@ -470,7 +517,8 @@ def scan_overview(scan_id: str) -> dict | None:
             (scan_id,),
         ).fetchall()
         baseline = conn.execute(
-            """SELECT id, created_at, completed_at, summary_json
+            """SELECT id, created_at, completed_at, max_pages, max_depth,
+                summary_json, content_checks_json, scan_options_json
             FROM scans
             WHERE url=? AND id<>? AND status='completed' AND created_at<?
             ORDER BY created_at DESC LIMIT 1""",
@@ -498,13 +546,15 @@ def scan_overview(scan_id: str) -> dict | None:
             scan,
         ))
         comparison = compare_issue_groups(scan["issue_groups"], baseline_groups)
-        baseline_summary = json.loads(baseline["summary_json"] or "{}")
+        baseline_scan = row_to_dict(baseline)
+        baseline_summary = baseline_scan["summary"]
         comparison["baseline"] = {
             "id": baseline["id"],
             "created_at": baseline["created_at"],
             "completed_at": baseline["completed_at"],
             "health_score": baseline_summary.get("health_score"),
         }
+        comparison["score"] = score_comparison(scan, baseline_scan)
         scan["comparison"] = comparison
     elif scan["status"] == "completed":
         scan["comparison"] = {
@@ -585,7 +635,8 @@ def scan_details(scan_id: str) -> dict | None:
             (scan_id,),
         ).fetchall()
         baseline = conn.execute(
-            """SELECT id, created_at, completed_at, summary_json
+            """SELECT id, created_at, completed_at, max_pages, max_depth,
+                summary_json, content_checks_json, scan_options_json
             FROM scans
             WHERE url=? AND id<>? AND status='completed' AND created_at<?
             ORDER BY created_at DESC LIMIT 1""",
@@ -611,13 +662,15 @@ def scan_details(scan_id: str) -> dict | None:
             scan,
         ))
         comparison = compare_issue_groups(scan["issue_groups"], baseline_groups)
-        baseline_summary = json.loads(baseline["summary_json"] or "{}")
+        baseline_scan = row_to_dict(baseline)
+        baseline_summary = baseline_scan["summary"]
         comparison["baseline"] = {
             "id": baseline["id"],
             "created_at": baseline["created_at"],
             "completed_at": baseline["completed_at"],
             "health_score": baseline_summary.get("health_score"),
         }
+        comparison["score"] = score_comparison(scan, baseline_scan)
         scan["comparison"] = comparison
     elif scan["status"] == "completed":
         scan["comparison"] = {"baseline": None, "counts": {"new": 0, "fixed": 0, "recurring": 0, "unchanged": 0}, "items": []}

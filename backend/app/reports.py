@@ -286,6 +286,13 @@ def build_pdf(scan: dict, kind: str, comparison: dict | None = None) -> bytes:
             "Actionable request failures: "
             f"{summary.get('actionable_failed_requests', summary.get('failed_requests', 0))}"
         )
+    health_categories = summary.get("health_categories") or {}
+    checked_categories = [
+        f"{category.get('label', key.title())}: {category.get('score')}/100"
+        for key, category in health_categories.items()
+        if category.get("checked") and category.get("score") is not None
+    ]
+    health_coverage = summary.get("health_coverage") or {}
     intro = [
         {"text": agency, "font": "F2", "size": 9, "leading": 12, "color": "brand", "gap": 0},
         {"text": title, "font": "F2", "size": 20, "leading": 24, "color": "body", "gap": 5},
@@ -302,9 +309,23 @@ def build_pdf(scan: dict, kind: str, comparison: dict | None = None) -> bytes:
             "gap": 2,
         },
     ]
+    if health_coverage:
+        intro.append({
+            "text": (
+                f"Score coverage: {health_coverage.get('scope_percent', 0)}%"
+                f"  -  {str(health_coverage.get('confidence', 'focused')).replace('_', ' ').title()}"
+            ),
+            "font": "F1", "size": 9, "leading": 12, "color": "muted", "gap": 1,
+        })
+    for offset in range(0, len(checked_categories), 3):
+        intro.append({
+            "text": "    ".join(checked_categories[offset:offset + 3]),
+            "font": "F1", "size": 9, "leading": 12, "color": "body", "gap": 1,
+        })
     blocks = [intro]
     if comparison and comparison.get("baseline"):
         counts = comparison["counts"]
+        score_comparison = comparison.get("score") or {}
         blocks.append(
             [
                 {"text": "SCAN COMPARISON", "font": "F2", "size": 8, "leading": 11, "color": "brand", "gap": 12},
@@ -316,6 +337,14 @@ def build_pdf(scan: dict, kind: str, comparison: dict | None = None) -> bytes:
                     "leading": 14,
                     "color": "body",
                     "gap": 2,
+                },
+                {
+                    "text": (
+                        f"Health score change: {score_comparison.get('change', 0):+g} points"
+                        if score_comparison.get("compatible")
+                        else score_comparison.get("reason", "Health-score comparison unavailable.")
+                    ),
+                    "font": "F1", "size": 8, "leading": 11, "color": "muted", "gap": 1,
                 },
             ]
         )
@@ -442,12 +471,32 @@ def build_html(scan: dict, kind: str, comparison: dict | None = None) -> str:
         f"<b>{html.escape(str(value))}<small>{html.escape(label)}</small></b>"
         for value, label in metrics
     )
+    health_categories = summary.get("health_categories") or {}
+    category_html = "".join(
+        f"<div class=\"health-category\"><span>{html.escape(category.get('label', key.title()))}</span>"
+        f"<b>{html.escape(str(category.get('score')))}<small>/100</small></b></div>"
+        for key, category in health_categories.items()
+        if category.get("checked") and category.get("score") is not None
+    )
+    health_coverage = summary.get("health_coverage") or {}
+    health_details_html = ""
+    if category_html:
+        health_details_html = f"""<section><h2>BugBuster health breakdown</h2>
+<p>{html.escape(str(health_coverage.get('scope_percent', 0)))}% score coverage · {html.escape(str(health_coverage.get('confidence', 'focused')).replace('_', ' ').title())}</p>
+<div class="health-categories">{category_html}</div></section>"""
     comparison_html = ""
     if comparison and comparison.get("baseline"):
         counts = comparison["counts"]
+        score_comparison = comparison.get("score") or {}
+        score_comparison_text = (
+            f"Health score changed by {score_comparison.get('change', 0):+g} points using matching settings."
+            if score_comparison.get("compatible")
+            else score_comparison.get("reason", "Health-score comparison unavailable.")
+        )
         comparison_html = f"""<section><h2>Changes since the previous scan</h2><div class="metrics">
 <b>{counts['new']}<small>New</small></b><b>{counts['fixed']}<small>Fixed</small></b>
-<b>{counts['recurring']}<small>Recurring</small></b><b>{counts['unchanged']}<small>Unchanged</small></b></div></section>"""
+<b>{counts['recurring']}<small>Recurring</small></b><b>{counts['unchanged']}<small>Unchanged</small></b></div>
+<p>{html.escape(score_comparison_text)}</p></section>"""
     table_header = "".join(f"<th>{html.escape(header)}</th>" for header in headers)
     table_rows = "".join(
         "<tr>" + "".join(f"<td>{html.escape(str(value))}</td>" for value in row) + "</tr>"
@@ -458,9 +507,11 @@ def build_html(scan: dict, kind: str, comparison: dict | None = None) -> str:
 :root{{--brand:{brand}}}body{{font:14px system-ui;color:#17352a;margin:0;background:#f5f8f6}}main{{max-width:1120px;margin:32px auto;padding:28px;background:white;border-radius:16px}}
 header{{border-bottom:4px solid var(--brand);padding-bottom:18px}}h1{{margin:5px 0}}p,small{{color:#60766b}}.metrics{{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}}
 .metrics b{{padding:16px;background:#f0f7f3;border-radius:10px;font-size:26px}}.metrics small{{display:block;font-size:11px;text-transform:uppercase}}
+.health-categories{{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}}.health-category{{display:flex;justify-content:space-between;align-items:center;padding:13px;border:1px solid #dce7e0;border-radius:10px;background:#f7fbf8}}
+.health-category span{{font-size:12px;font-weight:700}}.health-category b{{font-size:20px;color:var(--brand)}}.health-category b small{{display:inline;font-size:9px}}
 table{{width:100%;border-collapse:collapse;margin-top:14px;font-size:12px}}th{{background:var(--brand);color:white;text-align:left}}th,td{{padding:9px;border:1px solid #dce7e0;vertical-align:top}}
-@media(max-width:700px){{main{{margin:0;border-radius:0;padding:16px}}.metrics{{grid-template-columns:repeat(2,1fr)}}table{{display:block;overflow:auto}}}}</style></head>
+@media(max-width:700px){{main{{margin:0;border-radius:0;padding:16px}}.metrics{{grid-template-columns:repeat(2,1fr)}}.health-categories{{grid-template-columns:1fr}}table{{display:block;overflow:auto}}}}</style></head>
 <body><main><header><small>{agency}</small><h1>{title}</h1><p>{html.escape(scan['url'])} · {html.escape(scan['created_at'])}</p></header>
 <section><h2>Scan summary</h2><div class="metrics">{metrics_html}</div></section>
-{comparison_html}<section><h2>{kind.title()} findings</h2><table><thead><tr>{table_header}</tr></thead><tbody>{table_rows}</tbody></table></section>
+{health_details_html}{comparison_html}<section><h2>{kind.title()} findings</h2><table><thead><tr>{table_header}</tr></thead><tbody>{table_rows}</tbody></table></section>
 <p><small>Generated {datetime.now().astimezone().isoformat(timespec='seconds')} · Read-only BugBuster report</small></p></main></body></html>"""

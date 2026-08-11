@@ -337,6 +337,27 @@ class DeleteScanTests(unittest.TestCase):
 
         self.assertEqual(scoped, [{"category": "page", "title": "Page could not be loaded"}])
 
+    def test_health_scores_compare_only_with_matching_scan_settings(self) -> None:
+        base = {
+            "max_pages": 25,
+            "max_depth": 3,
+            "scan_options": {"page_health": True, "accessibility": False},
+            "content_checks": {"headings": True},
+            "summary": {"health_score": 80, "health_method_version": "2.0"},
+        }
+        matching = {
+            **base,
+            "summary": {"health_score": 86, "health_method_version": "2.0"},
+        }
+        comparison = store.score_comparison(matching, base)
+        self.assertTrue(comparison["compatible"])
+        self.assertEqual(comparison["change"], 6)
+
+        different = {**matching, "max_pages": 50}
+        comparison = store.score_comparison(different, base)
+        self.assertFalse(comparison["compatible"])
+        self.assertIsNone(comparison["change"])
+
 
 if __name__ == "__main__":
     unittest.main()

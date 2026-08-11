@@ -197,6 +197,13 @@ type ScanComparison = {
   baseline: null | { id: string; created_at: string; completed_at?: string; health_score?: number }
   counts: { new: number; fixed: number; recurring: number; unchanged: number }
   items: IssueGroup[]
+  score?: {
+    compatible: boolean
+    reason: string
+    current_score?: number
+    baseline_score?: number
+    change?: number | null
+  }
 }
 type Page = {
   id: string
@@ -232,13 +239,36 @@ type Summary = {
   passed_requests?: number
   health_score?: number
   health_score_available?: boolean
-  health_breakdown?: {
-    page_reliability?: number
-    network_failures?: number
-    console_issues?: number
-    seo_coverage?: number
-    slow_pages?: number
+  health_method_version?: string
+  health_categories?: Record<string, {
+    label: string
+    score?: number | null
+    checked: boolean
+    coverage_percent: number
+    weight: number
+    finding_count: number
+    deduction: number
+  }>
+  health_coverage?: {
+    scope_percent: number
+    confidence: 'comprehensive' | 'standard' | 'focused' | 'limited'
+    reason: string
+    pages_scanned: number
+    page_limit?: number
+    reached_page_limit: boolean
+    important_pages?: { critical: number; high_value: number; standard: number }
   }
+  health_top_impacts?: Array<{
+    category: string
+    category_label: string
+    title: string
+    page_url: string
+    severity: string
+    page_priority: 'critical' | 'high_value' | 'standard'
+    priority_multiplier: number
+    risk_points: number
+  }>
+  health_breakdown?: Record<string, number>
   timeouts?: number
   robots_policy?: string
   robots_detail?: string
@@ -745,8 +775,12 @@ function App() {
   const scoreChecksSelected = selectedScanOptions.page_health
     || selectedScanOptions.performance
     || selectedScanOptions.seo
+    || selectedScanOptions.content_quality
+    || selectedScanOptions.responsive
+    || selectedScanOptions.accessibility
     || selectedScanOptions.console
     || selectedScanOptions.network
+    || selectedScanOptions.sitemap_indexing
   const scanInProgress = selected?.status === 'queued' || selected?.status === 'running'
   const findings = selected?.findings || []
   const issueGroups = selected?.issue_groups || []
@@ -943,8 +977,8 @@ function App() {
         <h2>{selected ? selected.url : 'Scan results'}</h2>
         {!selected ? <p className="muted">Select a scan to view its evidence.</p> : <>
           {selected.status === 'failed' && <p className="running">{selected.error || 'The scan failed without an error message. Restart the backend without reload mode and try again.'}</p>}
+          <HealthScorePanel summary={summary} available={scoreChecksSelected} />
           <div className="metrics">
-            <article className={`health-metric ${scoreChecksSelected ? healthScoreTone(summary.health_score) : 'neutral'}`}><b>{scoreChecksSelected ? (summary.health_score ?? '-') : '—'}</b><span>{scoreChecksSelected ? <>Health score <small>/ 100</small></> : 'Health score not calculated'}</span></article>
             <article><b>{summary.pages_scanned ?? 0}</b><span>Pages scanned</span></article>
             {selectedScanOptions.network && <article><b>{summary.network_requests ?? 0}</b><span>Network requests</span></article>}
             {selectedScanOptions.network && <article><b>{summary.actionable_failed_requests ?? summary.failed_requests ?? 0}</b><span>Actionable failures</span></article>}
@@ -953,17 +987,6 @@ function App() {
             {selectedScanOptions.content_quality && <article><b>{summary.content_issues ?? 0}</b><span>Content issues</span></article>}
             {selectedScanOptions.sitemap_indexing && <article><b>{summary.indexing_issues ?? 0}</b><span>Indexing issues</span></article>}
           </div>
-          {scoreChecksSelected && summary.health_breakdown && <details className="score-explainer">
-            <summary>How this health score is calculated</summary>
-            <p>The score starts at 100. Deductions are based on issue rates, not the total size of the crawl. {summary.ignored_failed_requests ? `${summary.ignored_failed_requests} low-impact network failures were excluded.` : ''}</p>
-            <div className="score-breakdown">
-              {selectedScanOptions.page_health && <span><b>-{summary.health_breakdown.page_reliability ?? 0}</b> Page reliability <small>max 30</small></span>}
-              {selectedScanOptions.network && <span><b>-{summary.health_breakdown.network_failures ?? 0}</b> Network failures <small>max 20</small></span>}
-              {selectedScanOptions.console && <span><b>-{summary.health_breakdown.console_issues ?? 0}</b> Console issues <small>max 15</small></span>}
-              {selectedScanOptions.seo && <span><b>-{summary.health_breakdown.seo_coverage ?? 0}</b> SEO coverage <small>max 20</small></span>}
-              {selectedScanOptions.performance && <span><b>-{summary.health_breakdown.slow_pages ?? 0}</b> Slow pages <small>max 15</small></span>}
-            </div>
-          </details>}
           {summary.robots_policy && <div className="policy"><b>Robots policy: {summary.robots_policy.replace('_', ' ')}</b><span>{summary.robots_detail} Minimum delay: {summary.rate_limit_ms} ms.</span></div>}
           {selectedScanOptions.sitemap_indexing && <SiteAnalysisPanel analysis={selected.site_analysis} />}
           <ComparisonPanel comparison={selected.comparison} />
@@ -1118,6 +1141,62 @@ function SiteAnalysisPanel({ analysis }: { analysis?: SiteAnalysis }) {
   </section>
 }
 
+function HealthScorePanel({ summary, available }: { summary: Summary; available: boolean }) {
+  const categoryOrder = ['reliability', 'performance', 'seo', 'accessibility', 'content', 'responsive']
+  const categories = summary.health_categories || {}
+  const coverage = summary.health_coverage
+  const impacts = summary.health_top_impacts || []
+  const score = summary.health_score
+  const tone = healthScoreTone(score)
+  const scoreLabel = score === undefined ? 'Calculating' : score >= 80 ? 'Healthy' : score >= 50 ? 'Needs attention' : 'High risk'
+  if (!available) {
+    return <section className="health-overview neutral">
+      <div><span className="eyebrow">BugBuster health</span><h3>Health score not calculated</h3></div>
+      <p>Select at least one scored quality area when starting a scan.</p>
+    </section>
+  }
+  return <section className={`health-overview ${tone}`} aria-labelledby="health-overview-heading">
+    <div className="health-overview-heading">
+      <div><span className="eyebrow">BugBuster health · Method {summary.health_method_version || '2.0'}</span><h3 id="health-overview-heading">Website health</h3></div>
+      {coverage && <span className={`coverage-confidence ${coverage.confidence}`}>{coverage.confidence} coverage</span>}
+    </div>
+    <div className="health-overview-body">
+      <div className="health-score-hero">
+        <b>{score ?? '—'}<small>/100</small></b>
+        <span>{scoreLabel}</span>
+        {coverage && <div className="coverage-meter"><label htmlFor="health-coverage">Checks included <b>{coverage.scope_percent}%</b></label><progress id="health-coverage" max="100" value={coverage.scope_percent} /></div>}
+      </div>
+      <div className="health-category-grid">
+        {categoryOrder.map((key) => {
+          const category = categories[key]
+          const categoryScore = category?.score
+          return <article className={!category?.checked ? 'not-checked' : healthScoreTone(categoryScore ?? undefined)} key={key}>
+            <div><span>{category?.label || key}</span><b>{category?.checked ? categoryScore : '—'}</b></div>
+            <progress max="100" value={category?.checked ? categoryScore ?? 0 : 0} aria-label={`${category?.label || key} score`} />
+            <small>{category?.checked ? `${category.finding_count} weighted ${category.finding_count === 1 ? 'issue' : 'issues'}` : 'Not checked'}</small>
+          </article>
+        })}
+      </div>
+    </div>
+    <details className="health-explanation">
+      <summary>Why this score and what to fix first</summary>
+      <div className="health-explanation-content">
+        <div>
+          <h4>How it works</h4>
+          <p>Issue severity is multiplied by page importance: critical pages ×3, high-value pages ×2, and standard pages ×1. Results are normalized by pages scanned and only selected checks affect the score.</p>
+          {coverage && <p className="coverage-note">{coverage.reason}</p>}
+        </div>
+        <div>
+          <h4>Highest score impacts</h4>
+          {impacts.length
+            ? <ol>{impacts.map((impact, index) => <li key={`${impact.title}-${impact.page_url}-${index}`}><b>{impact.title}</b><span>{impact.category_label} · {impact.page_priority.replace('_', ' ')} page ×{impact.priority_multiplier}</span></li>)}</ol>
+            : <p>No score-reducing issues were detected in the selected checks.</p>}
+        </div>
+      </div>
+    </details>
+  </section>
+}
+
 type ReportPanelProps = {
   agencyName: string
   reportTitle: string
@@ -1198,6 +1277,11 @@ function ComparisonPanel({ comparison }: { comparison?: ScanComparison | null })
       <div><span className="eyebrow">Since the previous scan</span><h3 id="comparison-heading">What changed</h3></div>
       <small>Compared with {new Date(comparison.baseline.created_at).toLocaleString()}</small>
     </div>
+    {comparison.score && <div className={comparison.score.compatible ? 'score-comparison compatible' : 'score-comparison incompatible'}>
+      {comparison.score.compatible
+        ? <><b>{comparison.score.change && comparison.score.change > 0 ? '+' : ''}{comparison.score.change ?? 0} health points</b><span>{comparison.score.baseline_score} → {comparison.score.current_score} using matching scan settings</span></>
+        : <><b>Health-score comparison unavailable</b><span>{comparison.score.reason} Issue changes are still shown below.</span></>}
+    </div>}
     <div className="comparison-counts">
       {(['new', 'fixed', 'recurring', 'unchanged'] as const).map((status) =>
         <div className={`comparison-count ${status}`} key={status}>
@@ -1225,7 +1309,13 @@ function IssueGroupCard({ group }: { group: IssueGroup }) {
     <div className="issue-group-body">
       <div className="issue-title-row">
         <div><b>{group.title}</b><small>{group.category} · {group.count} occurrences across {group.affected_pages.length} {group.affected_pages.length === 1 ? 'page' : 'pages'}</small></div>
-        <div className="issue-markers"><span className={`page-priority ${group.page_priority}`}>{group.page_priority.replace(/_/g, ' ')}</span><span className={`confidence ${group.confidence}`}>{group.confidence.replace(/_/g, ' ')}</span></div>
+        <div className="issue-markers">
+          <span
+            className={`page-priority ${group.page_priority}`}
+            title="Business importance of the affected page; this is separate from issue severity."
+          >Page importance: {group.page_priority.replace(/_/g, ' ')}</span>
+          <span className={`confidence ${group.confidence}`}>{group.confidence.replace(/_/g, ' ')}</span>
+        </div>
       </div>
       {group.shared_origin && <div className="shared-origin">
         <div><span>{group.shared_origin.kind === 'component' ? 'Shared component' : 'Shared template'}</span><b>{group.shared_origin.label}</b></div>

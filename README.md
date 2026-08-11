@@ -86,7 +86,7 @@ The checks are diagnostic rather than visual guesses:
 - Small-text detection reports visible rendered text below 12px.
 - Off-screen image detection reports visible images crossing the horizontal viewport boundary.
 
-Responsive findings do not currently change the health score. They are prioritized using severity and the page’s Critical, High value, or Standard importance.
+Responsive findings contribute to the Responsive Experience category when that optional check is selected. They are prioritized using severity and the page’s Critical, High value, or Standard importance.
 
 ## Accessibility testing
 
@@ -155,15 +155,17 @@ PDF reports use an audience-specific document layout rather than dense table row
 
 ## Health score
 
-The score starts at 100 and uses normalized issue rates so larger scans are not penalized simply for having more pages or requests. Deductions are capped across five dimensions:
+**BugBuster Health Score 2.0** is a transparent product score, not an international standard. It combines six separately visible categories: Reliability, Performance, SEO and Indexing, Accessibility, Content Quality, and Responsive Experience. Only checks selected for that scan participate in the calculation.
 
-- Page reliability: up to 30 points for pages that fail to load.
-- Network failures: up to 20 points based on the failed-request percentage.
-- Console issues: up to 15 points based on warnings and errors per page.
-- SEO coverage: up to 20 points for missing titles, descriptions, and H1 headings.
-- Slow pages: up to 15 points based on the percentage of pages exceeding the performance threshold.
+Each actionable finding receives a severity weight and a business-page multiplier:
 
-Passed requests, advertising/analytics failures, scanner/client blocks, browser-aborted requests, and other informational findings do not reduce the score. First-party failures remain high severity; functional third-party failures are medium severity.
+- Critical pages multiply risk by 3.
+- High-value pages multiply risk by 2.
+- Standard pages multiply risk by 1.
+
+Category scores combine issue prevalence with the highest individual business impact, then normalize by pages scanned. The overall score is a weighted average of the checked categories. The dashboard shows check coverage, whether the crawl reached its page limit, the three largest score impacts, and the scoring-method version. Informational findings and console messages already linked to a network failure do not reduce the score.
+
+Health-score changes are shown between scans only when page limits, depth, selected checks, content-check settings, and scoring versions match. Issue-level changes remain available when score comparison is incompatible.
 
 ## Crawl policy decisions
 

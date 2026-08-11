@@ -62,6 +62,39 @@ class ResponsiveFindingTests(unittest.TestCase):
 
         self.assertFalse(any("Navigation may be broken" in item["title"] for item in findings))
 
+    def test_clipped_carousel_image_without_document_overflow_is_not_an_issue(self) -> None:
+        evidence = {
+            "desktop": viewport(1440, 900),
+            "tablet": viewport(
+                768,
+                1024,
+                document_width=768,
+                images_outside_viewport=["img.carousel-slide"],
+            ),
+        }
+
+        findings = responsive_findings("https://example.com/news", evidence)
+
+        self.assertFalse(any("Images extend outside" in item["title"] for item in findings))
+
+    def test_image_causing_real_document_overflow_remains_actionable(self) -> None:
+        evidence = {
+            "desktop": viewport(1440, 900),
+            "mobile": viewport(
+                390,
+                844,
+                document_width=450,
+                overflow_elements=["img.hero"],
+                images_outside_viewport=["img.hero"],
+            ),
+        }
+
+        findings = responsive_findings("https://example.com", evidence)
+        titles = {finding["title"] for finding in findings}
+
+        self.assertIn("Horizontal overflow on Mobile", titles)
+        self.assertIn("Images extend outside Mobile viewport", titles)
+
 
 if __name__ == "__main__":
     unittest.main()

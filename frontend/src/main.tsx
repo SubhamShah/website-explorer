@@ -977,7 +977,12 @@ function App() {
         <h2>{selected ? selected.url : 'Scan results'}</h2>
         {!selected ? <p className="muted">Select a scan to view its evidence.</p> : <>
           {selected.status === 'failed' && <p className="running">{selected.error || 'The scan failed without an error message. Restart the backend without reload mode and try again.'}</p>}
-          <HealthScorePanel summary={summary} available={scoreChecksSelected} />
+          <HealthScorePanel
+            summary={summary}
+            available={scoreChecksSelected}
+            calculating={scanInProgress && summary.health_score === undefined}
+            scanOptions={selectedScanOptions}
+          />
           <div className="metrics">
             <article><b>{summary.pages_scanned ?? 0}</b><span>Pages scanned</span></article>
             {selectedScanOptions.network && <article><b>{summary.network_requests ?? 0}</b><span>Network requests</span></article>}
@@ -1141,8 +1146,25 @@ function SiteAnalysisPanel({ analysis }: { analysis?: SiteAnalysis }) {
   </section>
 }
 
-function HealthScorePanel({ summary, available }: { summary: Summary; available: boolean }) {
-  const categoryOrder = ['reliability', 'performance', 'seo', 'accessibility', 'content', 'responsive']
+function HealthScorePanel({
+  summary,
+  available,
+  calculating,
+  scanOptions,
+}: {
+  summary: Summary
+  available: boolean
+  calculating: boolean
+  scanOptions: ScanOptions
+}) {
+  const categoryDefinitions = [
+    ['reliability', 'Reliability', scanOptions.page_health || scanOptions.console || scanOptions.network],
+    ['performance', 'Performance', scanOptions.performance],
+    ['seo', 'SEO & indexing', scanOptions.seo || scanOptions.sitemap_indexing || scanOptions.content_quality],
+    ['accessibility', 'Accessibility', scanOptions.accessibility],
+    ['content', 'Content quality', scanOptions.content_quality],
+    ['responsive', 'Responsive', scanOptions.responsive],
+  ] as const
   const categories = summary.health_categories || {}
   const coverage = summary.health_coverage
   const impacts = summary.health_top_impacts || []
@@ -1150,30 +1172,37 @@ function HealthScorePanel({ summary, available }: { summary: Summary; available:
   const tone = healthScoreTone(score)
   const scoreLabel = score === undefined ? 'Calculating' : score >= 80 ? 'Healthy' : score >= 50 ? 'Needs attention' : 'High risk'
   if (!available) {
-    return <section className="health-overview neutral">
+    return <section className="health-overview unavailable">
       <div><span className="eyebrow">BugBuster health</span><h3>Health score not calculated</h3></div>
       <p>Select at least one scored quality area when starting a scan.</p>
     </section>
   }
-  return <section className={`health-overview ${tone}`} aria-labelledby="health-overview-heading">
+  return <section className={`health-overview ${tone}${calculating ? ' calculating' : ''}`} aria-labelledby="health-overview-heading" aria-busy={calculating}>
     <div className="health-overview-heading">
       <div><span className="eyebrow">BugBuster health · Method {summary.health_method_version || '2.0'}</span><h3 id="health-overview-heading">Website health</h3></div>
-      {coverage && <span className={`coverage-confidence ${coverage.confidence}`}>{coverage.confidence} coverage</span>}
+      <span className={`coverage-confidence ${coverage?.confidence || 'pending'}`}>
+        {coverage ? `${coverage.confidence} coverage` : calculating ? 'Calculating coverage' : 'Coverage unavailable'}
+      </span>
     </div>
     <div className="health-overview-body">
       <div className="health-score-hero">
         <b>{score ?? '—'}<small>/100</small></b>
         <span>{scoreLabel}</span>
-        {coverage && <div className="coverage-meter"><label htmlFor="health-coverage">Checks included <b>{coverage.scope_percent}%</b></label><progress id="health-coverage" max="100" value={coverage.scope_percent} /></div>}
+        <div className="coverage-meter">
+          <label htmlFor="health-coverage"><span>Checks included</span><b>{coverage ? `${coverage.scope_percent}%` : '—'}</b></label>
+          <progress id="health-coverage" max="100" value={coverage?.scope_percent ?? 0} />
+        </div>
       </div>
       <div className="health-category-grid">
-        {categoryOrder.map((key) => {
+        {categoryDefinitions.map(([key, fallbackLabel, selected]) => {
           const category = categories[key]
           const categoryScore = category?.score
-          return <article className={!category?.checked ? 'not-checked' : healthScoreTone(categoryScore ?? undefined)} key={key}>
-            <div><span>{category?.label || key}</span><b>{category?.checked ? categoryScore : '—'}</b></div>
-            <progress max="100" value={category?.checked ? categoryScore ?? 0 : 0} aria-label={`${category?.label || key} score`} />
-            <small>{category?.checked ? `${category.finding_count} weighted ${category.finding_count === 1 ? 'issue' : 'issues'}` : 'Not checked'}</small>
+          const checked = category?.checked ?? selected
+          const waiting = calculating && !category
+          return <article className={!checked ? 'not-checked' : waiting ? 'category-calculating' : healthScoreTone(categoryScore ?? undefined)} key={key}>
+            <div><span>{category?.label || fallbackLabel}</span><b>{checked && categoryScore !== undefined && categoryScore !== null ? categoryScore : '—'}</b></div>
+            <progress max="100" value={checked ? categoryScore ?? 0 : 0} aria-label={`${category?.label || fallbackLabel} score`} />
+            <small>{!checked ? 'Not checked' : waiting ? 'Calculating…' : `${category?.finding_count ?? 0} weighted ${(category?.finding_count ?? 0) === 1 ? 'issue' : 'issues'}`}</small>
           </article>
         })}
       </div>

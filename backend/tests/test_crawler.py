@@ -179,6 +179,28 @@ class HealthScoreTests(unittest.TestCase):
         self.assertEqual(details["categories"]["reliability"]["finding_count"], 1)
         self.assertLess(score, 100)
 
+    def test_generic_failed_resource_line_is_supporting_evidence_not_a_second_penalty(self) -> None:
+        findings = [
+            {
+                "category": "console",
+                "severity": "medium",
+                "page_url": "https://example.com",
+                "title": "Browser error",
+                "detail": "Access to script at 'https://chat.example/widget' was blocked by CORS policy.",
+            },
+            {
+                "category": "console",
+                "severity": "medium",
+                "page_url": "https://example.com",
+                "title": "Browser error",
+                "detail": "Failed to load resource: net::ERR_FAILED",
+            },
+        ]
+
+        _, details = calculate_health_score(findings, 1)
+
+        self.assertEqual(details["categories"]["reliability"]["finding_count"], 1)
+
     def test_severity_and_page_importance_increase_business_impact(self) -> None:
         standard_score, _ = calculate_health_score(
             [{"category": "page", "severity": "low", "page_url": "https://example.com/blog/news"}],
@@ -218,6 +240,21 @@ class HealthScoreTests(unittest.TestCase):
 
 
 class ConsoleFindingTests(unittest.TestCase):
+    def test_cors_console_message_is_classified_without_network_capture(self) -> None:
+        item = classify_console_item(
+            "https://example.com",
+            {
+                "level": "error",
+                "message": "Access to script at 'https://embed.tawk.to/widget' was blocked by CORS policy.",
+            },
+            [],
+        )
+        finding = console_finding("https://example.com", item)
+
+        self.assertEqual(item["classification"], "live_chat")
+        self.assertEqual(item["related_request_url"], "https://embed.tawk.to/widget")
+        self.assertIn("live chat", finding["title"])
+
     def test_resource_error_inherits_analytics_classification(self) -> None:
         network = [
             classify_network_item(

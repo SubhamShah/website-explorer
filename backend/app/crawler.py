@@ -280,6 +280,29 @@ def classify_console_item(page_url: str, item: dict, network: list[dict]) -> dic
         )
         return enriched
 
+    embedded_url = re.search(r"https?://[^\s'\"<>]+", message)
+    if embedded_url and ("CORS policy" in message or "blocked by CORS" in message):
+        request_url = embedded_url.group(0).rstrip(".,;:)")
+        related = classify_network_item(
+            page_url,
+            {
+                "method": "GET",
+                "url": request_url,
+                "status": "failed",
+                "resource_type": "script",
+                "error": "CORS policy blocked the request",
+            },
+        )
+        enriched.update(
+            {
+                "classification": related.get("classification", "network"),
+                "severity": related.get("severity", "medium"),
+                "failure_kind": "cors_error",
+                "related_request_url": request_url,
+            }
+        )
+        return enriched
+
     related = _correlated_network_item(item, network)
     if related:
         enriched.update(

@@ -190,15 +190,185 @@ def _pdf_field(label: str, value: object) -> list[dict]:
     ]
 
 
+def _pdf_compact_field(label: str, value: object, width: int = 140, link: str | None = None) -> list[dict]:
+    """Render complete appendix evidence without repeating a large field heading."""
+    lines = _pdf_text_lines(value, width=width)
+    return [
+        {
+            "text": f"{label.upper()}: {line}" if index == 0 else f"    {line}",
+            "font": "F2" if index == 0 else "F1",
+            "size": 7,
+            "leading": 8,
+            "color": "brand" if link else "body",
+            "gap": 0,
+            **({"link": link} if link else {}),
+        }
+        for index, line in enumerate(lines)
+    ]
+
+
+def _pdf_url_list_field(label: str, urls: list[str], remaining: int = 0) -> list[dict]:
+    lines: list[dict] = [
+        {"text": label.upper(), "font": "F2", "size": 7, "leading": 9, "color": "muted", "gap": 4}
+    ]
+    for url in urls:
+        lines.extend(
+            {
+                "text": wrapped,
+                "font": "F1",
+                "size": 8,
+                "leading": 10,
+                "color": "brand",
+                "gap": 0,
+                "link": url,
+            }
+            for wrapped in _pdf_text_lines(url, width=105)
+        )
+    if remaining:
+        lines.append({
+            "text": f"Complete list in the occurrence index ({remaining} more pages)",
+            "font": "F1", "size": 8, "leading": 10, "color": "muted", "gap": 1,
+        })
+    return lines
+
+
+def _pdf_group_blocks(scan: dict, kind: str, comparison: dict | None) -> tuple[list[list[dict]], dict[str, int]]:
+    groups = comparison["items"] if comparison and comparison.get("baseline") else scan.get("issue_groups", [])
+    findings_by_fingerprint: dict[str, list[dict]] = {}
+    for finding in scan.get("findings", []):
+        findings_by_fingerprint.setdefault(str(finding.get("fingerprint") or ""), []).append(finding)
+    references: dict[str, int] = {}
+    blocks: list[list[dict]] = []
+    for index, group in enumerate(groups[:1000], 1):
+        fingerprint = group.get("fingerprint") or group.get("group_id")
+        if fingerprint:
+            references[fingerprint] = index
+        pages = group.get("affected_pages", [])
+        status = group.get("change_status")
+        summary_parts = [
+            group.get("severity", "unknown").upper(),
+            f"{group.get('page_priority', 'standard').replace('_', ' ').title()} importance",
+            f"{group.get('count', len(pages))} occurrences",
+            f"{len(pages)} affected {'page' if len(pages) == 1 else 'pages'}",
+        ]
+        if status:
+            summary_parts.insert(0, status.upper())
+        block = [
+            {"text": f"ISSUE GROUP {index}", "font": "F2", "size": 7, "leading": 9, "color": "brand", "gap": 10},
+            {"text": group.get("title", "Untitled issue"), "font": "F2", "size": 11, "leading": 13, "color": "body", "gap": 1},
+            {"text": "  -  ".join(summary_parts), "font": "F1", "size": 7.5, "leading": 10, "color": "muted", "gap": 2},
+            *_pdf_field("What happened" if kind == "qa" else "Technical pattern", group.get("what_happened") or group.get("sample_detail")),
+            *_pdf_field("Why it matters", group.get("why_it_matters")),
+            *_pdf_field("Suggested owner", group.get("owner")),
+            *_pdf_field("Recommended action", group.get("recommended_action")),
+        ]
+        if kind == "qa":
+            block.extend(_pdf_field("How it was verified", group.get("verification")))
+        if group.get("category") == "accessibility":
+            sample_findings = findings_by_fingerprint.get(str(fingerprint or ""), []) or [
+                item
+                for item in scan.get("findings", [])
+                if item.get("title") == group.get("title") and item.get("category") == group.get("category")
+            ]
+            sample_screenshot = group.get("example_element_screenshot_path") or next(
+                (item.get("element_screenshot_path") or item.get("screenshot_path") for item in sample_findings if item.get("element_screenshot_path") or item.get("screenshot_path")),
+                None,
+            )
+            block.extend(_pdf_field("WCAG / axe-core rule", _accessibility_standard(group)))
+            block.extend(_pdf_field("Example affected element", group.get("example_affected_element")))
+            if kind == "developer":
+                block.extend(_pdf_field("Example DOM evidence", group.get("example_dom_evidence")))
+                block.extend(_pdf_field("Example screenshot", sample_screenshot))
+        if group.get("shared_origin"):
+            origin = group["shared_origin"]
+            block.extend(_pdf_field(
+                "Likely shared origin",
+                f"{origin['label']} ({origin['confidence']} confidence; {origin['affected_page_count']} pages)",
+            ))
+        if pages:
+            block.extend(_pdf_url_list_field("Affected-page preview", pages[:3], max(0, len(pages) - 3)))
+        block.append({"divider": True, "leading": 7, "gap": 4})
+        blocks.append(block)
+    return blocks, references
+
+
+def _pdf_occurrence_blocks(scan: dict, kind: str, group_references: dict[str, int], comparison: dict | None) -> list[list[dict]]:
+    findings = [
+        item
+        for item in scan.get("findings", [])
+        if kind == "developer" or item.get("severity") != "info"
+    ]
+    groups_by_fingerprint = {
+        (item.get("fingerprint") or item.get("group_id")): item
+        for item in scan.get("issue_groups", [])
+    }
+    change_by_fingerprint = {
+        item["fingerprint"]: item["change_status"]
+        for item in (comparison or {}).get("items", [])
+        if item.get("fingerprint")
+    }
+    blocks: list[list[dict]] = []
+    for index, finding in enumerate(findings[:1000], 1):
+        fingerprint = finding.get("fingerprint", "")
+        group = groups_by_fingerprint.get(fingerprint, {})
+        group_number = group_references.get(fingerprint)
+        change = change_by_fingerprint.get(fingerprint)
+        summary_parts = [
+            finding.get("severity", "unknown").upper(),
+            finding.get("page_priority", "standard").replace("_", " ").title(),
+            finding.get("category", "other").title(),
+        ]
+        if group_number:
+            summary_parts.insert(0, f"Group {group_number}")
+        if change:
+            summary_parts.insert(0, change.upper())
+        occurrence_heading = (
+            f"OCCURRENCE {index}  |  {'  |  '.join(summary_parts)}  |  "
+            f"{finding.get('title', 'Untitled finding')}"
+        )
+        block = [
+            *[
+                {
+                    "text": line,
+                    "font": "F2" if line_index == 0 else "F1",
+                    "size": 7.5,
+                    "leading": 9,
+                    "color": "brand" if line_index == 0 else "muted",
+                    "gap": 4 if line_index == 0 else 0,
+                }
+                for line_index, line in enumerate(_pdf_text_lines(occurrence_heading, width=138))
+            ],
+            *_pdf_compact_field("Page", finding.get("page_url"), link=finding.get("page_url")),
+            *_pdf_compact_field("Evidence", finding.get("detail")),
+        ]
+        if finding.get("category") == "accessibility":
+            block.extend(_pdf_compact_field("WCAG / rule", _accessibility_standard(finding)))
+            block.extend(_pdf_compact_field("Affected element", finding.get("affected_element")))
+            if kind == "developer":
+                block.extend(_pdf_compact_field("DOM", finding.get("dom_evidence")))
+                block.extend(_pdf_compact_field("Screenshot", finding.get("screenshot_path")))
+        # Common guidance is printed once in the root-cause card. Preserve any
+        # occurrence-specific value here when it differs from the grouped value.
+        distinct_fields = [
+            ("Impact", "why_it_matters"),
+            ("Verification", "verification"),
+            ("Action", "recommended_action"),
+        ]
+        for label, key in distinct_fields:
+            value = finding.get(key)
+            if value and value != group.get(key):
+                block.extend(_pdf_compact_field(label, value))
+        block.append({"divider": True, "leading": 3.5, "gap": 2})
+        blocks.append(block)
+    return blocks
+
+
 def _pdf_issue_blocks(scan: dict, kind: str, comparison: dict | None) -> list[list[dict]]:
     blocks: list[list[dict]] = []
     if kind == "executive":
         groups = comparison["items"] if comparison and comparison.get("baseline") else scan.get("issue_groups", [])
         for index, group in enumerate(groups[:1000], 1):
             pages = group.get("affected_pages", [])
-            page_list = "\n".join(pages[:12])
-            if len(pages) > 12:
-                page_list += f"\n...and {len(pages) - 12} more affected pages"
             status = group.get("change_status")
             summary = (
                 f"{group.get('severity', 'unknown').upper()} severity  -  "
@@ -224,48 +394,17 @@ def _pdf_issue_blocks(scan: dict, kind: str, comparison: dict | None) -> list[li
                         if group.get("shared_origin")
                         else []
                     ),
-                    *_pdf_field("Affected pages", page_list),
+                    *_pdf_url_list_field("Affected pages", pages[:12], max(0, len(pages) - 12)),
                     {"divider": True, "leading": 9, "gap": 6},
                 ]
             )
     else:
-        findings = [
-            item
-            for item in scan.get("findings", [])
-            if kind == "developer" or item.get("severity") != "info"
-        ]
-        change_by_fingerprint = {
-            item["fingerprint"]: item["change_status"]
-            for item in (comparison or {}).get("items", [])
-        }
-        for index, finding in enumerate(findings[:1000], 1):
-            change = change_by_fingerprint.get(finding.get("fingerprint", ""))
-            summary_parts = [
-                finding.get("severity", "unknown").upper(),
-                finding.get("page_priority", "standard").replace("_", " ").title(),
-                finding.get("category", "other").title(),
-            ]
-            if change:
-                summary_parts.insert(0, change.upper())
-            block = [
-                {"text": f"{'QA FINDING' if kind == 'qa' else 'EVIDENCE'} {index}", "font": "F2", "size": 7, "leading": 9, "color": "brand", "gap": 12},
-                {"text": finding.get("title", "Untitled finding"), "font": "F2", "size": 12, "leading": 15, "color": "body", "gap": 2},
-                {"text": "  -  ".join(summary_parts), "font": "F1", "size": 8, "leading": 11, "color": "muted", "gap": 2},
-                *_pdf_field("Affected page", finding.get("page_url")),
-                *_pdf_field("What happened" if kind == "qa" else "Technical evidence", finding.get("detail")),
-            ]
-            if finding.get("category") == "accessibility":
-                block.extend(_pdf_field("WCAG / axe-core rule", _accessibility_standard(finding)))
-                block.extend(_pdf_field("Affected element", finding.get("affected_element")))
-                if kind == "developer":
-                    block.extend(_pdf_field("DOM evidence", finding.get("dom_evidence")))
-                    block.extend(_pdf_field("Screenshot evidence", finding.get("screenshot_path")))
-            if kind == "qa":
-                block.extend(_pdf_field("Why it matters", finding.get("why_it_matters")))
-                block.extend(_pdf_field("How it was verified", finding.get("verification")))
-            block.extend(_pdf_field("Recommended action", finding.get("recommended_action")))
-            block.append({"divider": True, "leading": 9, "gap": 6})
-            blocks.append(block)
+        group_blocks, _ = _pdf_group_blocks(scan, kind, comparison)
+        blocks.extend(group_blocks)
+        blocks.append([
+            {"text": "COMPLETE EVIDENCE EXPORT", "font": "F2", "size": 10, "leading": 13, "color": "body", "gap": 14},
+            {"text": "This PDF is intentionally organized around actionable root causes. Download the matching CSV or Excel report for every occurrence, affected URL, and full row-level evidence without making this document unnecessarily long.", "font": "F1", "size": 8, "leading": 11, "color": "muted", "gap": 6},
+        ])
     return blocks
 
 
@@ -296,7 +435,7 @@ def build_pdf(scan: dict, kind: str, comparison: dict | None = None) -> bytes:
     intro = [
         {"text": agency, "font": "F2", "size": 9, "leading": 12, "color": "brand", "gap": 0},
         {"text": title, "font": "F2", "size": 20, "leading": 24, "color": "body", "gap": 5},
-        {"text": scan["url"], "font": "F1", "size": 9, "leading": 12, "color": "muted", "gap": 1},
+        {"text": scan["url"], "font": "F1", "size": 9, "leading": 12, "color": "brand", "gap": 1, "link": scan["url"]},
         {"text": f"Scan completed: {scan['created_at']}", "font": "F1", "size": 8, "leading": 11, "color": "muted", "gap": 0},
         {"divider": True, "leading": 12, "gap": 9},
         {"text": "SCAN SUMMARY", "font": "F2", "size": 8, "leading": 11, "color": "brand", "gap": 2},
@@ -348,10 +487,16 @@ def build_pdf(scan: dict, kind: str, comparison: dict | None = None) -> bytes:
                 },
             ]
         )
+    if kind != "executive":
+        blocks.append([
+            {"text": "HOW TO READ THIS REPORT", "font": "F2", "size": 8, "leading": 11, "color": "brand", "gap": 12},
+            {"text": "Start with Prioritized issue groups. Each group explains one problem, its impact, owner, and recommended fix without repeating the same guidance for every page.", "font": "F1", "size": 8, "leading": 11, "color": "body", "gap": 1},
+            {"text": "Each group includes representative evidence and an affected-page preview. Green website links are clickable. Use CSV or Excel when you need the complete occurrence ledger.", "font": "F1", "size": 8, "leading": 11, "color": "muted", "gap": 2},
+        ])
     blocks.append(
         [
             {
-                "text": "PRIORITIZED ROOT CAUSES" if kind == "executive" else ("QA FINDINGS" if kind == "qa" else "DEVELOPER EVIDENCE"),
+                "text": "PRIORITIZED ROOT CAUSES" if kind == "executive" else "PRIORITIZED ISSUE GROUPS",
                 "font": "F2",
                 "size": 14,
                 "leading": 18,
@@ -370,8 +515,16 @@ def build_pdf(scan: dict, kind: str, comparison: dict | None = None) -> bytes:
         if pages[-1] and block_height > remaining_height:
             pages.append([])
             remaining_height = 682
-        pages[-1].extend(block)
-        remaining_height -= block_height
+        # Very long evidence (for example DOM snippets) can exceed a page by
+        # itself. Split it safely so complete evidence is never drawn below the
+        # footer or silently lost.
+        for item in block:
+            item_height = item.get("leading", 11) + item.get("gap", 0)
+            if pages[-1] and item_height > remaining_height:
+                pages.append([])
+                remaining_height = 682
+            pages[-1].append(item)
+            remaining_height -= item_height
 
     brand = scan.get("brand_color") or "#187249"
     try:
@@ -394,6 +547,7 @@ def build_pdf(scan: dict, kind: str, comparison: dict | None = None) -> bytes:
         page_id = len(objects) + 1
         content_id = page_id + 1
         page_ids.append(page_id)
+        link_rectangles: list[tuple[float, float, float, float, str]] = []
         content_lines = [
             f"{brand_rgb[0]:.3f} {brand_rgb[1]:.3f} {brand_rgb[2]:.3f} rg",
             "42 770 528 4 re f",
@@ -415,13 +569,18 @@ def build_pdf(scan: dict, kind: str, comparison: dict | None = None) -> bytes:
                 y -= line.get("leading", 9)
                 continue
             red, green, blue = colors[line.get("color", "body")]
+            text = str(line.get("text", ""))
+            size = float(line.get("size", 9))
             content_lines.extend(
                 [
-                    f"BT /{line.get('font', 'F1')} {line.get('size', 9)} Tf",
+                    f"BT /{line.get('font', 'F1')} {size:g} Tf",
                     f"{red:.3f} {green:.3f} {blue:.3f} rg",
-                    f"42 {y:.1f} Td ({_pdf_escape(str(line.get('text', '')))}) Tj ET",
+                    f"42 {y:.1f} Td ({_pdf_escape(text)}) Tj ET",
                 ]
             )
+            if line.get("link"):
+                estimated_width = min(528.0, max(18.0, len(text) * size * 0.52))
+                link_rectangles.append((42.0, y - 2.0, 42.0 + estimated_width, y + size + 2.0, str(line["link"])))
             y -= line.get("leading", 11)
         content_lines.extend(
             [
@@ -431,8 +590,17 @@ def build_pdf(scan: dict, kind: str, comparison: dict | None = None) -> bytes:
             ]
         )
         content = "\n".join(content_lines).encode("latin-1")
-        objects.append(f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents {content_id} 0 R >>".encode())
+        annotation_ids = list(range(content_id + 1, content_id + 1 + len(link_rectangles)))
+        annotations = f" /Annots [{' '.join(f'{item} 0 R' for item in annotation_ids)}]" if annotation_ids else ""
+        objects.append(f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents {content_id} 0 R{annotations} >>".encode())
         objects.append(b"<< /Length " + str(len(content)).encode() + b" >>\nstream\n" + content + b"\nendstream")
+        for left, bottom, right, top, url in link_rectangles:
+            objects.append(
+                (
+                    f"<< /Type /Annot /Subtype /Link /Rect [{left:.1f} {bottom:.1f} {right:.1f} {top:.1f}] "
+                    f"/Border [0 0 0] /A << /S /URI /URI ({_pdf_escape(url)}) >> >>"
+                ).encode("latin-1")
+            )
     objects[0] = b"<< /Type /Catalog /Pages 2 0 R >>"
     objects[1] = f"<< /Type /Pages /Kids [{' '.join(f'{page_id} 0 R' for page_id in page_ids)}] /Count {len(page_ids)} >>".encode()
     output = bytearray(b"%PDF-1.4\n")

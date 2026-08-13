@@ -125,11 +125,30 @@ def calculate_health_score(
     priorities = page_priorities or {}
     coverage_by_category = category_coverage(scan_options, content_checks)
     risks: dict[str, list[dict]] = {key: [] for key in CATEGORY_WEIGHTS}
+    descriptive_console_pages = {
+        str(item.get("page_url") or "")
+        for item in findings
+        if item.get("category") == "console"
+        and str(item.get("detail") or "").strip() != "Failed to load resource: net::ERR_FAILED"
+    }
 
     for finding in findings:
         if not _finding_enabled(finding, scan_options, content_checks):
             continue
-        if finding.get("category") == "console" and finding.get("related_request_url"):
+        if (
+            finding.get("category") == "console"
+            and finding.get("related_request_url")
+            and _option(scan_options, "network")
+        ):
+            continue
+        if (
+            finding.get("category") == "console"
+            and str(finding.get("detail") or "").strip() == "Failed to load resource: net::ERR_FAILED"
+            and str(finding.get("page_url") or "") in descriptive_console_pages
+        ):
+            # Chromium often emits this context-free line immediately after a
+            # more descriptive CORS or request error. Keep it as evidence, but
+            # do not charge the health score twice for the same page event.
             continue
         category = FINDING_CATEGORIES.get(str(finding.get("category", "")))
         if not category or coverage_by_category[category] <= 0:

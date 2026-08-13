@@ -1,8 +1,10 @@
 import io
 import csv
+import re
 import unittest
 import zipfile
 
+from app.insights import build_issue_groups
 from app.reports import build_csv, build_html, build_pdf, build_xlsx
 
 
@@ -62,8 +64,55 @@ class ReportExportTests(unittest.TestCase):
         self.assertIn(b"RECOMMENDED ACTION", payload)
         self.assertIn(b"AFFECTED PAGES", payload)
         self.assertIn(b"Page 1 of", payload)
+        self.assertIn(b"/Subtype /Link", payload)
+        self.assertIn(b"/S /URI /URI (https://example.com/)", payload)
+        self.assertIn(b"/S /URI /URI (https://example.com/checkout)", payload)
         self.assertNotIn(b"Severity | Page importance", payload)
         self.assertTrue(payload.endswith(b"%%EOF"))
+
+    def test_qa_pdf_groups_repeated_guidance_without_repeating_every_occurrence(self) -> None:
+        scan = sample_scan()
+        scan["findings"] = [
+            {
+                **scan["findings"][0],
+                "page_url": f"https://example.com/products/{index}",
+                "detail": f"Unique evidence marker {index}: response took {3000 + index} ms.",
+            }
+            for index in range(60)
+        ]
+        scan["issue_groups"] = build_issue_groups(scan["findings"])
+
+        payload = build_pdf(scan, "qa")
+        page_count = max(int(value) for value in re.findall(rb"/Count (\d+)", payload))
+
+        self.assertIn(b"PRIORITIZED ISSUE GROUPS", payload)
+        self.assertIn(b"COMPLETE EVIDENCE EXPORT", payload)
+        self.assertIn(b"CSV or Excel", payload)
+        self.assertNotIn(b"OCCURRENCE 60", payload)
+        self.assertLessEqual(page_count, 10)
+
+    def test_developer_pdf_keeps_dom_and_screenshot_in_compact_index(self) -> None:
+        scan = sample_scan()
+        finding = {
+            **scan["findings"][0],
+            "category": "accessibility",
+            "title": "Accessibility: Form elements must have labels",
+            "axe_rule_id": "label",
+            "wcag_criteria": ["1.3.1", "4.1.2"],
+            "wcag_level": "Level A",
+            "affected_element": "form input#email",
+            "dom_evidence": '<input id="email">',
+            "screenshot_path": "scan-desktop.png",
+        }
+        scan["findings"] = [finding]
+        scan["issue_groups"] = build_issue_groups(scan["findings"])
+
+        payload = build_pdf(scan, "developer")
+
+        self.assertIn(b"EXAMPLE DOM EVIDENCE", payload)
+        self.assertIn(b'<input id="email">', payload)
+        self.assertIn(b"EXAMPLE SCREENSHOT", payload)
+        self.assertIn(b"scan-desktop.png", payload)
 
     def test_csv_is_excel_compatible_and_contains_page_importance(self) -> None:
         payload = build_csv(sample_scan(), "qa")

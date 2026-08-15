@@ -3,7 +3,7 @@ from __future__ import annotations
 from .insights import infer_page_priority
 
 
-HEALTH_METHOD_VERSION = "2.0"
+HEALTH_METHOD_VERSION = "2.1"
 SEVERITY_WEIGHTS = {"critical": 8.0, "high": 5.0, "medium": 3.0, "low": 1.0, "info": 0.0}
 PAGE_PRIORITY_MULTIPLIERS = {"critical": 3.0, "high_value": 2.0, "standard": 1.0}
 CATEGORY_WEIGHTS = {
@@ -13,6 +13,7 @@ CATEGORY_WEIGHTS = {
     "accessibility": 15.0,
     "content": 15.0,
     "responsive": 10.0,
+    "security": 15.0,
 }
 CATEGORY_LABELS = {
     "reliability": "Reliability",
@@ -21,6 +22,7 @@ CATEGORY_LABELS = {
     "accessibility": "Accessibility",
     "content": "Content quality",
     "responsive": "Responsive experience",
+    "security": "Passive security",
 }
 FINDING_CATEGORIES = {
     "page": "reliability",
@@ -34,6 +36,7 @@ FINDING_CATEGORIES = {
     "accessibility": "accessibility",
     "content": "content",
     "responsive": "responsive",
+    "security": "security",
 }
 CONTENT_CHECK_KEYS = (
     "duplicate_titles",
@@ -82,6 +85,7 @@ def category_coverage(scan_options: dict | None, content_checks: dict | None) ->
         "accessibility": 1.0 if _option(scan_options, "accessibility") else 0.0,
         "content": _content_coverage(scan_options, content_checks),
         "responsive": 1.0 if _option(scan_options, "responsive") else 0.0,
+        "security": 1.0 if _option(scan_options, "passive_security") else 0.0,
     }
 
 
@@ -98,6 +102,7 @@ def _finding_enabled(finding: dict, options: dict | None, checks: dict | None) -
         "accessibility": "accessibility",
         "content": "content_quality",
         "responsive": "responsive",
+        "security": "passive_security",
     }
     if category in option_by_category and not _option(options, option_by_category[category]):
         return False
@@ -230,7 +235,7 @@ def calculate_health_score(
     else:
         score = 100
 
-    scope_percent = round(total_effective_weight)
+    scope_percent = min(100, round(total_effective_weight))
     reached_page_limit = bool(max_pages and pages_scanned >= max_pages)
     if reached_page_limit:
         confidence = "limited"

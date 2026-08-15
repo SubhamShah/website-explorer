@@ -120,6 +120,7 @@ class ReportApiTests(unittest.TestCase):
         self.assertFalse(request.scan_options.network)
         self.assertFalse(request.scan_options.console)
         self.assertFalse(request.scan_options.sitemap_indexing)
+        self.assertFalse(request.scan_options.passive_security)
 
     def test_page_priority_change_recalculates_completed_health_score(self) -> None:
         store.update_scan(
@@ -134,7 +135,7 @@ class ReportApiTests(unittest.TestCase):
         updated = store.get_scan(self.scan["id"])
 
         self.assertIsNotNone(result["health_score"])
-        self.assertEqual(updated["summary"]["health_method_version"], "2.0")
+        self.assertEqual(updated["summary"]["health_method_version"], "2.1")
         self.assertEqual(
             updated["summary"]["health_top_impacts"][0]["priority_multiplier"],
             3.0,

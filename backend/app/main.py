@@ -53,6 +53,7 @@ class ScanOptions(BaseModel):
     network: bool = False
     sitemap_indexing: bool = False
     template_intelligence: bool = False
+    passive_security: bool = False
 
 
 class ScanRequest(BaseModel):

@@ -22,6 +22,7 @@ from .quality import (
     page_content_findings,
 )
 from .responsive import capture_responsive_evidence, responsive_findings
+from .security import passive_security_findings
 from .templates import attach_template_metadata, template_metadata
 
 SCREENSHOTS = Path(__file__).resolve().parents[1] / "data" / "screenshots"
@@ -41,6 +42,7 @@ DEFAULT_SCAN_OPTIONS = {
     "network": False,
     "sitemap_indexing": False,
     "template_intelligence": False,
+    "passive_security": False,
 }
 TRACKING_QUERY_KEYS = {"fbclid", "gclid", "dclid", "msclkid"}
 RETRYABLE_PAGE_STATUSES = {404, 408, 425, 429, 500, 502, 503, 504}
@@ -405,6 +407,7 @@ async def scan_website(
         for key in (
             "page_health", "performance", "seo", "content_quality", "responsive",
             "accessibility", "console", "network", "sitemap_indexing",
+            "passive_security",
         )
     )
     settings = {**DEFAULT_CONTENT_CHECKS, **(content_checks or {})}
@@ -561,6 +564,8 @@ async def scan_website(
                 screenshot_path = None
                 final_url = url
                 error_type = error_detail = None
+                response_headers: dict = {}
+                security_evidence: dict = {}
                 try:
                     response = await page.goto(url, wait_until="domcontentloaded", timeout=NAVIGATION_TIMEOUT_MS)
                     initial_status = response.status if response else 0
@@ -577,6 +582,7 @@ async def scan_website(
                         if response and response.status < 400:
                             recovered_page_count += 1
                     final_url = normalize_url(page.url)
+                    response_headers = response.headers if response else {}
                     if not same_site(final_url, normalized_root):
                         blocked_redirects += 1
                         error_type = "cross_domain_redirect"
@@ -616,8 +622,22 @@ async def scan_website(
                                         .join('.');
                                     return `${node.tagName.toLowerCase()}${node.getAttribute('role') ? `[${node.getAttribute('role')}]` : ''}${classes ? `.${classes}` : ''}`;
                                 }),
+                                insecure_resources: [...document.querySelectorAll(
+                                    'script[src],iframe[src],link[rel~="stylesheet"][href],img[src],audio[src],video[src],source[src]'
+                                )].map(node => node.src || node.href || '').filter(value => value.startsWith('http://')).slice(0, 20),
+                                active_insecure_resource_count: [...document.querySelectorAll('script[src],iframe[src],link[rel~="stylesheet"][href]')]
+                                    .filter(node => (node.src || node.href || '').startsWith('http://')).length,
+                                insecure_form_actions: [...document.forms].map(node => node.getAttribute('action') || '')
+                                    .filter(value => value.trim().toLowerCase().startsWith('http://')).slice(0, 10),
+                                password_input_count: document.querySelectorAll('input[type="password"]').length,
                             })"""
                         )
+                        security_evidence = {
+                            "insecure_resources": page_data.get("insecure_resources", []),
+                            "active_insecure_resource_count": page_data.get("active_insecure_resource_count", 0),
+                            "insecure_form_actions": page_data.get("insecure_form_actions", []),
+                            "password_input_count": page_data.get("password_input_count", 0),
+                        }
                         title = page_data["title"]
                         h1 = page_data["h1"]
                         meta_description = page_data["meta_description"]
@@ -791,6 +811,16 @@ async def scan_website(
                         }
                     )
                 if not error_type:
+                    if status < 400 and options["passive_security"]:
+                        cookies = await context.cookies([final_url]) if page_count == 1 else []
+                        findings.extend(passive_security_findings(
+                            url,
+                            final_url,
+                            response_headers,
+                            security_evidence,
+                            cookies,
+                            check_cookies=page_count == 1,
+                        ))
                     if options["seo"] and not title.strip():
                         findings.append({"page_url": url, "severity": "medium", "category": "seo", "title": "Missing page title", "detail": "This page does not have a usable HTML title."})
                     if options["seo"] and not meta_description.strip():
@@ -849,6 +879,7 @@ async def scan_website(
                             and item.get("severity") != "info"
                             for item in findings
                         ),
+                        "security_issues": sum(item.get("category") == "security" for item in findings),
                         "retried_pages": retried_page_count,
                         "recovered_pages": recovered_page_count,
                         "robots_policy": policy.status,
@@ -926,6 +957,7 @@ async def scan_website(
                     and item.get("severity") != "info"
                     for item in findings
                 ),
+                "security_issues": sum(item.get("category") == "security" for item in findings),
                 "content_issues": sum(item.get("category") == "content" for item in findings),
                 "indexing_issues": sum(
                     item.get("category") == "indexing" and item.get("severity") != "info"

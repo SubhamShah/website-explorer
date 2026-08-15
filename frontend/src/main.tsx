@@ -70,6 +70,7 @@ type ScanOptions = {
   network: boolean
   sitemap_indexing: boolean
   template_intelligence: boolean
+  passive_security: boolean
 }
 type SiteAnalysis = {
   sitemap_sources?: string[]
@@ -278,6 +279,7 @@ type Summary = {
   accessibility_issues?: number
   content_issues?: number
   indexing_issues?: number
+  security_issues?: number
   sitemap_urls?: number
 }
 type Scan = {
@@ -336,6 +338,7 @@ const DEFAULT_SCAN_OPTIONS: ScanOptions = {
   network: false,
   sitemap_indexing: false,
   template_intelligence: false,
+  passive_security: false,
 }
 
 const ALL_SCAN_OPTIONS: ScanOptions = Object.fromEntries(
@@ -357,6 +360,7 @@ const SCAN_OPTION_CHOICES: {
   { key: 'accessibility', label: 'Accessibility and ARIA', description: 'Run detailed WCAG and screen-reader checks with axe-core.', level: 'Optional' },
   { key: 'console', label: 'Browser console messages', description: 'Record technical warnings and errors produced by page scripts.', level: 'Optional' },
   { key: 'network', label: 'API and network activity', description: 'Record passed and failed API, image, font, script, and document requests.', level: 'Optional' },
+  { key: 'passive_security', label: 'Passive security posture', description: 'Check HTTPS, common browser protections, insecure page resources, forms, and sensitive-cookie settings without attacking the website.', level: 'Optional' },
   { key: 'sitemap_indexing', label: 'Sitemap and search indexing', description: 'Compare crawled pages with sitemap, robots, canonical, and noindex signals.', level: 'Optional' },
   { key: 'template_intelligence', label: 'Shared templates and components', description: 'Group repeated issues that likely come from the same layout or component.', level: 'Optional' },
 ]
@@ -820,7 +824,12 @@ function App() {
   return <main>
     <header>
       <div><span className="eyebrow">BugBuster Labs</span><h1>Website Explorer</h1><p>Authorized, read-only website health scans.</p></div>
-      <button className="secondary" onClick={() => void loadScans()}>Refresh scans</button>
+      <button
+        type="button"
+        className="secondary"
+        aria-label="Refresh Website Explorer page"
+        onClick={() => window.location.reload()}
+      >Refresh page</button>
     </header>
     {message && <div className="toast" role="status">{message}</div>}
     {scanInProgress && <div className="progress-banner" role="status" aria-live="polite">
@@ -960,17 +969,22 @@ function App() {
 
     <div className="layout">
       <section className="card scan-list">
-        <h2>Scan history</h2>
-        {scans.length ? scans.map((scan) =>
-          <div className={selected?.id === scan.id ? 'scan-entry active' : 'scan-entry'} key={scan.id}>
-            <button className="scan" onClick={() => void openScan(scan.id)}>
-              <b>{scan.url}</b><span>{scan.status} - {new Date(scan.created_at).toLocaleString()}</span>
-            </button>
-            <button className="scan-delete" disabled={deletingScanId === scan.id} aria-label={`Delete scan for ${scan.url}`} title="Delete scan" onClick={() => void deleteScan(scan)}>
-              {deletingScanId === scan.id ? '...' : 'Delete'}
-            </button>
-          </div>,
-        ) : <p className="muted">No scans yet.</p>}
+        <div className="scan-list-heading">
+          <h2>Scan history</h2>
+          <span>{scans.length} {scans.length === 1 ? 'scan' : 'scans'}</span>
+        </div>
+        <div className="scan-history-scroll" tabIndex={0} aria-label="Scrollable scan history">
+          {scans.length ? scans.map((scan) =>
+            <div className={selected?.id === scan.id ? 'scan-entry active' : 'scan-entry'} key={scan.id}>
+              <button className="scan" onClick={() => void openScan(scan.id)}>
+                <b>{scan.url}</b><span>{scan.status} - {new Date(scan.created_at).toLocaleString()}</span>
+              </button>
+              <button className="scan-delete" disabled={deletingScanId === scan.id} aria-label={`Delete scan for ${scan.url}`} title="Delete scan" onClick={() => void deleteScan(scan)}>
+                {deletingScanId === scan.id ? '...' : 'Delete'}
+              </button>
+            </div>,
+          ) : <p className="muted scan-history-empty">No scans yet.</p>}
+        </div>
       </section>
 
       <section className="card results">
@@ -989,6 +1003,7 @@ function App() {
             {selectedScanOptions.network && <article><b>{summary.actionable_failed_requests ?? summary.failed_requests ?? 0}</b><span>Actionable failures</span></article>}
             {selectedScanOptions.responsive && <article><b>{summary.responsive_issues ?? 0}</b><span>Responsive issues</span></article>}
             {selectedScanOptions.accessibility && <article><b>{summary.accessibility_issues ?? 0}</b><span>Accessibility issues</span></article>}
+            {selectedScanOptions.passive_security && <article><b>{summary.security_issues ?? 0}</b><span>Passive security issues</span></article>}
             {selectedScanOptions.content_quality && <article><b>{summary.content_issues ?? 0}</b><span>Content issues</span></article>}
             {selectedScanOptions.sitemap_indexing && <article><b>{summary.indexing_issues ?? 0}</b><span>Indexing issues</span></article>}
           </div>
@@ -1164,6 +1179,7 @@ function HealthScorePanel({
     ['accessibility', 'Accessibility', scanOptions.accessibility],
     ['content', 'Content quality', scanOptions.content_quality],
     ['responsive', 'Responsive', scanOptions.responsive],
+    ['security', 'Passive security', scanOptions.passive_security],
   ] as const
   const categories = summary.health_categories || {}
   const coverage = summary.health_coverage
@@ -1179,7 +1195,7 @@ function HealthScorePanel({
   }
   return <section className={`health-overview ${tone}${calculating ? ' calculating' : ''}`} aria-labelledby="health-overview-heading" aria-busy={calculating}>
     <div className="health-overview-heading">
-      <div><span className="eyebrow">BugBuster health · Method {summary.health_method_version || '2.0'}</span><h3 id="health-overview-heading">Website health</h3></div>
+      <div><span className="eyebrow">BugBuster health · Method {summary.health_method_version || '2.1'}</span><h3 id="health-overview-heading">Website health</h3></div>
       <span className={`coverage-confidence ${coverage?.confidence || 'pending'}`}>
         {coverage ? `${coverage.confidence} coverage` : calculating ? 'Calculating coverage' : 'Coverage unavailable'}
       </span>

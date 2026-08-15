@@ -203,6 +203,21 @@ def finding_metadata(finding: dict) -> dict:
         owner = "Accessibility / Frontend developer"
         why_it_matters = "People using assistive technology may be unable to understand or operate the affected element."
         action = "Inspect the captured element and DOM evidence, apply the axe-core recommendation, and verify with keyboard and assistive-technology testing."
+    elif category == "security":
+        confidence = "confirmed"
+        verification = "Observed without attack payloads by inspecting the loaded page, response headers, and first-party cookie settings."
+        owner = "Website administrator / Developer"
+        why_it_matters = "A missing preventive protection can make a successful attack easier or expose visitor information. It does not prove the website is currently compromised."
+        if "https" in title_lower or "insecure connection" in title_lower:
+            action = "Serve the page and every referenced resource over HTTPS, then redirect HTTP traffic to HTTPS."
+        elif "browser security protections" in title_lower:
+            action = "Ask the hosting or development team to add the listed response headers. Start with HSTS and Content-Security-Policy, then verify the site still works."
+        elif "cookie" in title_lower:
+            action = "Set Secure and HttpOnly on login or session cookies in the server configuration, then test sign-in and session behavior."
+        elif "version" in title_lower:
+            action = "Remove exact software versions from Server or X-Powered-By response headers and keep the underlying software patched."
+        else:
+            action = "Review the captured page evidence and apply the named preventive browser protection."
     elif category == "content":
         confidence = "confirmed"
         verification = "Confirmed from the rendered page content and same-domain link evidence captured by the scan."

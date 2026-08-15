@@ -154,7 +154,7 @@ class HealthScoreTests(unittest.TestCase):
         score, details = calculate_health_score([], 20, 1000, 0, max_pages=25)
         self.assertEqual(score, 100)
         self.assertEqual(sum(details["deductions"].values()), 0)
-        self.assertEqual(details["method_version"], "2.0")
+        self.assertEqual(details["method_version"], "2.1")
         self.assertEqual(details["coverage"]["confidence"], "comprehensive")
 
     def test_score_is_normalized_by_scan_size_and_request_volume(self) -> None:
@@ -233,6 +233,34 @@ class HealthScoreTests(unittest.TestCase):
         self.assertEqual(score, 100)
         self.assertFalse(details["categories"]["accessibility"]["checked"])
         self.assertEqual(details["coverage"]["confidence"], "focused")
+
+    def test_selected_passive_security_has_its_own_health_category(self) -> None:
+        options = {
+            "page_health": False,
+            "network": False,
+            "console": False,
+            "performance": False,
+            "seo": False,
+            "sitemap_indexing": False,
+            "accessibility": False,
+            "content_quality": False,
+            "responsive": False,
+            "passive_security": True,
+        }
+        score, details = calculate_health_score(
+            [{
+                "category": "security",
+                "severity": "high",
+                "page_url": "https://example.com/login",
+                "title": "Sensitive cookie can travel without encryption",
+            }],
+            5,
+            scan_options=options,
+        )
+
+        self.assertLess(score, 100)
+        self.assertTrue(details["categories"]["security"]["checked"])
+        self.assertEqual(details["categories"]["security"]["finding_count"], 1)
 
     def test_reaching_the_page_limit_marks_coverage_limited(self) -> None:
         _, details = calculate_health_score([], 25, max_pages=25)

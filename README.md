@@ -51,7 +51,7 @@ npm run build
 ## MVP capabilities
 
 - Add an authorized website URL and scan limits.
-- Choose scan coverage before starting. Common checks are recommended by default, while responsive testing, accessibility/ARIA, console messages, network/API recording, sitemap/indexing, and template intelligence are opt-in.
+- Choose scan coverage before starting. Common checks are recommended by default, while responsive testing, accessibility/ARIA, console messages, network/API recording, passive security posture, sitemap/indexing, and template intelligence are opt-in.
 - Unchecked result categories are not collected and do not appear in the dashboard or generated reports. Content-quality checks have their own detailed checkboxes.
 - Crawl same-domain pages with Playwright.
 - Capture screenshots, console errors, complete network activity, titles, H1s, and meta descriptions.
@@ -155,7 +155,9 @@ PDF reports use an audience-specific document layout rather than dense table row
 
 ## Health score
 
-**BugBuster Health Score 2.0** is a transparent product score, not an international standard. It combines six separately visible categories: Reliability, Performance, SEO and Indexing, Accessibility, Content Quality, and Responsive Experience. Only checks selected for that scan participate in the calculation.
+**BugBuster Health Score 2.1** is a transparent product score, not an international standard. It combines seven separately visible categories: Reliability, Performance, SEO and Indexing, Accessibility, Content Quality, Responsive Experience, and Passive Security. Only checks selected for that scan participate in the calculation.
+
+Passive security posture is deliberately read-only. It inspects HTTPS use, common protective response headers, insecure page resources and form destinations, first-party sensitive-cookie protections, and unnecessary server-version disclosure. It does not send attack payloads, submit forms, test credentials, bypass access controls, or attempt injection; those active capabilities belong in a separately authorized security-scanner product.
 
 Each actionable finding receives a severity weight and a business-page multiplier:
 

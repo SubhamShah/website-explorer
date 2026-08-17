@@ -37,6 +37,10 @@ Open the URL shown by Vite, usually `http://localhost:5174`.
 
 Large scans use lightweight status polling and never start a second refresh while the previous one is active. Completed results load as a compact overview, 50 page summaries, and 250 filtered findings at a time. Full console, network, responsive, and content evidence is fetched only when a page is expanded, while reports continue to use all saved evidence.
 
+An active scan can be paused and resumed while the same backend process remains running. Pause completes and saves the page currently in progress, then waits before taking the next URL from the crawl queue. Resume continues with that preserved queue and does not rescan completed pages. Because the live crawl queue is process-owned, stopping or restarting the Python backend ends resumability for a paused scan.
+
+Page load time measures navigation through `DOMContentLoaded` only. Screenshot capture, responsive viewport analysis, accessibility evaluation, and other evidence processing are intentionally excluded so audit overhead cannot create false slow-page findings. Responsive scans remain slower overall because they render and capture desktop, tablet, and mobile evidence for every successfully loaded page.
+
 ### Tests
 
 ```powershell

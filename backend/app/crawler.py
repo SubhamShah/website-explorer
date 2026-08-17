@@ -60,6 +60,15 @@ ANALYTICS_HOST_SUFFIXES = {
 
 
 @dataclass
+class ScanControl:
+    resume_event: asyncio.Event
+
+
+_BACKGROUND_TASKS: dict[str, asyncio.Task] = {}
+_SCAN_CONTROLS: dict[str, ScanControl] = {}
+
+
+@dataclass
 class RobotsPolicy:
     parser: RobotFileParser | None
     status: str
@@ -389,7 +398,11 @@ async def scan_website(
     content_checks: dict | None = None,
     scan_options: dict | None = None,
 ) -> None:
-    store.update_scan(scan_id, status="running")
+    control = _SCAN_CONTROLS.get(scan_id)
+    store.update_scan(
+        scan_id,
+        status="running" if control is None or control.resume_event.is_set() else "paused",
+    )
     SCREENSHOTS.mkdir(parents=True, exist_ok=True)
     normalized_root = normalize_url(root_url)
     queue = deque([(normalized_root, 0)])
@@ -473,6 +486,10 @@ async def scan_website(
 
             last_navigation_started = 0.0
             while queue and page_count < max_pages and not policy.disallow_all:
+                if control is not None:
+                    # Pause only between pages so a partially loaded page is
+                    # never discarded or repeated when the scan resumes.
+                    await control.resume_event.wait()
                 url, depth = queue.popleft()
                 queued.discard(url)
                 if url in visited or depth > max_depth:
@@ -559,6 +576,7 @@ async def scan_website(
                 await page.route("**/*", enforce_navigation_boundary)
                 started = perf_counter()
                 last_navigation_started = started
+                load_ms = 0
                 status, title, h1, meta_description, links = 0, "", "", "", []
                 responsive = {}
                 screenshot_path = None
@@ -568,10 +586,12 @@ async def scan_website(
                 security_evidence: dict = {}
                 try:
                     response = await page.goto(url, wait_until="domcontentloaded", timeout=NAVIGATION_TIMEOUT_MS)
+                    load_ms = round((perf_counter() - started) * 1000)
                     initial_status = response.status if response else 0
                     if should_retry_page_status(initial_status):
                         retried_page_count += 1
                         await page.wait_for_timeout(policy.rate_limit_ms)
+                        retry_started = perf_counter()
                         retry_response = await page.goto(
                             url,
                             wait_until="domcontentloaded",
@@ -579,6 +599,7 @@ async def scan_website(
                         )
                         if retry_response:
                             response = retry_response
+                        load_ms = round((perf_counter() - retry_started) * 1000)
                         if response and response.status < 400:
                             recovered_page_count += 1
                     final_url = normalize_url(page.url)
@@ -737,18 +758,19 @@ async def scan_website(
                                     }
                                 )
                 except PlaywrightTimeoutError:
+                    load_ms = round((perf_counter() - started) * 1000)
                     timeout_count += 1
                     error_type = "timeout"
                     error_detail = f"Navigation did not reach DOM content loaded within {NAVIGATION_TIMEOUT_MS:,} ms."
                     if options["network"]:
                         network.append({"method": "GET", "url": url, "status": "timeout", "resource_type": "document", "error": error_detail})
                 except Exception as error:
+                    load_ms = round((perf_counter() - started) * 1000)
                     error_type = "navigation_error"
                     error_detail = str(error)[:300]
                     if options["network"]:
                         network.append({"method": "GET", "url": url, "status": "failed", "resource_type": "document", "error": error_detail})
 
-                load_ms = round((perf_counter() - started) * 1000)
                 page_count += 1
                 await page.close()
                 network = [classify_network_item(url, item) for item in network]
@@ -970,9 +992,6 @@ async def scan_website(
         store.update_scan(scan_id, status="failed", error=str(error)[:500])
 
 
-_BACKGROUND_TASKS: dict[str, asyncio.Task] = {}
-
-
 def start_scan(
     scan_id: str,
     url: str,
@@ -981,17 +1000,40 @@ def start_scan(
     content_checks: dict | None = None,
     scan_options: dict | None = None,
 ) -> None:
+    resume_event = asyncio.Event()
+    resume_event.set()
+    _SCAN_CONTROLS[scan_id] = ScanControl(resume_event=resume_event)
     task = asyncio.create_task(
         scan_website(scan_id, url, max_pages, max_depth, content_checks, scan_options)
     )
     _BACKGROUND_TASKS[scan_id] = task
-    task.add_done_callback(
-        lambda completed, current_scan_id=scan_id: (
+
+    def cleanup(completed: asyncio.Task, current_scan_id: str = scan_id) -> None:
+        if _BACKGROUND_TASKS.get(current_scan_id) is completed:
             _BACKGROUND_TASKS.pop(current_scan_id, None)
-            if _BACKGROUND_TASKS.get(current_scan_id) is completed
-            else None
-        )
-    )
+            _SCAN_CONTROLS.pop(current_scan_id, None)
+
+    task.add_done_callback(cleanup)
+
+
+def pause_scan(scan_id: str) -> bool:
+    task = _BACKGROUND_TASKS.get(scan_id)
+    control = _SCAN_CONTROLS.get(scan_id)
+    if not task or task.done() or not control:
+        return False
+    control.resume_event.clear()
+    store.update_scan(scan_id, status="paused")
+    return True
+
+
+def resume_scan(scan_id: str) -> bool:
+    task = _BACKGROUND_TASKS.get(scan_id)
+    control = _SCAN_CONTROLS.get(scan_id)
+    if not task or task.done() or not control:
+        return False
+    control.resume_event.set()
+    store.update_scan(scan_id, status="running")
+    return True
 
 
 async def cancel_scan(scan_id: str) -> None:
@@ -1003,3 +1045,6 @@ async def cancel_scan(scan_id: str) -> None:
         await task
     except asyncio.CancelledError:
         pass
+    finally:
+        _BACKGROUND_TASKS.pop(scan_id, None)
+        _SCAN_CONTROLS.pop(scan_id, None)

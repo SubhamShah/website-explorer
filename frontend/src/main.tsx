@@ -391,6 +391,7 @@ function App() {
   const [findingsView, setFindingsView] = useState<'grouped' | 'individual'>('grouped')
   const [message, setMessage] = useState('')
   const [starting, setStarting] = useState(false)
+  const [scanControlBusy, setScanControlBusy] = useState(false)
   const [deletingScanId, setDeletingScanId] = useState<string | null>(null)
   const [agencyName, setAgencyName] = useState('')
   const [reportTitle, setReportTitle] = useState('')
@@ -527,7 +528,7 @@ function App() {
       const response = await fetch(`${API}/scans/${id}/status`, { cache: 'no-store' })
       if (!response.ok) return
       const status: Scan = await response.json()
-      const isActive = status.status === 'queued' || status.status === 'running'
+      const isActive = status.status === 'queued' || status.status === 'running' || status.status === 'paused'
       setSelected((current) => current?.id === id
         ? { ...current, status: status.status, summary: status.summary, error: status.error }
         : current)
@@ -543,7 +544,7 @@ function App() {
   useEffect(() => {
     const timer = window.setInterval(() => {
       void loadScans()
-      if (selected?.status === 'queued' || selected?.status === 'running') void pollScanStatus(selected.id)
+      if (selected?.status === 'queued' || selected?.status === 'running' || selected?.status === 'paused') void pollScanStatus(selected.id)
     }, 3000)
     return () => window.clearInterval(timer)
   }, [selected?.id, selected?.status])
@@ -624,7 +625,7 @@ function App() {
   }
 
   const deleteScan = async (scan: Scan) => {
-    const action = scan.status === 'queued' || scan.status === 'running' ? 'cancel and delete' : 'delete'
+    const action = ['queued', 'running', 'paused'].includes(scan.status) ? 'cancel and delete' : 'delete'
     if (!window.confirm(`Permanently ${action} the scan for ${scan.url}?`)) return
     setDeletingScanId(scan.id)
     try {
@@ -644,6 +645,28 @@ function App() {
       setMessage(error instanceof Error ? error.message : 'Could not delete the scan.')
     } finally {
       setDeletingScanId(null)
+    }
+  }
+
+  const changeScanActivity = async (action: 'pause' | 'resume') => {
+    if (!selected || scanControlBusy) return
+    const scanId = selected.id
+    setScanControlBusy(true)
+    try {
+      const response = await fetch(`${API}/scans/${scanId}/${action}`, { method: 'POST' })
+      const payload = await response.json()
+      if (!response.ok) throw new Error(payload.detail || `Could not ${action} the scan.`)
+      setSelected((current) => current?.id === scanId
+        ? { ...current, status: payload.status, summary: payload.summary || current.summary }
+        : current)
+      await loadScans()
+      setMessage(action === 'pause'
+        ? 'Pause requested. The current page will finish safely, then the scan will wait.'
+        : 'Scan resumed from the saved crawl position.')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : `Could not ${action} the scan.`)
+    } finally {
+      setScanControlBusy(false)
     }
   }
 
@@ -785,7 +808,10 @@ function App() {
     || selectedScanOptions.console
     || selectedScanOptions.network
     || selectedScanOptions.sitemap_indexing
+    || selectedScanOptions.passive_security
   const scanInProgress = selected?.status === 'queued' || selected?.status === 'running'
+  const scanPaused = selected?.status === 'paused'
+  const scanOngoing = scanInProgress || scanPaused
   const findings = selected?.findings || []
   const issueGroups = selected?.issue_groups || []
   const categories = useMemo(
@@ -832,10 +858,23 @@ function App() {
       >Refresh page</button>
     </header>
     {message && <div className="toast" role="status">{message}</div>}
-    {scanInProgress && <div className="progress-banner" role="status" aria-live="polite">
+    {scanOngoing && <div className={scanPaused ? 'progress-banner paused' : 'progress-banner'} role="status" aria-live="polite">
       <span className="progress-dot" aria-hidden="true" />
-      <div><b>Scan in progress</b><span>Pages and findings refresh automatically until the scan completes.</span></div>
-      <strong className="progress-count">{summary.pages_scanned ?? selected.pages?.length ?? 0} / {selected.max_pages} pages</strong>
+      <div className="progress-banner-copy">
+        <b>{scanPaused ? 'Scan paused' : 'Scan in progress'}</b>
+        <span>{scanPaused
+          ? 'Completed pages are preserved. Keep the backend running, then resume from the next unscanned page.'
+          : 'Pages and findings refresh automatically until the scan completes.'}</span>
+      </div>
+      <div className="progress-actions">
+        <strong className="progress-count">{summary.pages_scanned ?? selected.pages?.length ?? 0} / {selected.max_pages} pages</strong>
+        <button
+          type="button"
+          className="progress-control"
+          disabled={scanControlBusy}
+          onClick={() => void changeScanActivity(scanPaused ? 'resume' : 'pause')}
+        >{scanControlBusy ? 'Please wait…' : scanPaused ? 'Resume scan' : 'Pause scan'}</button>
+      </div>
     </div>}
 
     <form className="scan-setup-form" onSubmit={start}>
@@ -994,7 +1033,7 @@ function App() {
           <HealthScorePanel
             summary={summary}
             available={scoreChecksSelected}
-            calculating={scanInProgress && summary.health_score === undefined}
+            calculating={scanOngoing && summary.health_score === undefined}
             scanOptions={selectedScanOptions}
           />
           <div className="metrics">

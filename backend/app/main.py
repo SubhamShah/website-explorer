@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import store
-from .crawler import SCREENSHOTS, cancel_scan, normalize_url, start_scan
+from .crawler import SCREENSHOTS, cancel_scan, normalize_url, pause_scan, resume_scan, start_scan
 from .health import (
     HEALTH_METHOD_VERSION,
     calculate_health_score,
@@ -187,6 +187,37 @@ def get_scan_status(scan_id: str) -> dict:
     if not scan:
         raise HTTPException(404, "Scan not found.")
     return scan
+
+
+@app.post("/api/scans/{scan_id}/pause")
+async def pause_active_scan(scan_id: str) -> dict:
+    scan = store.get_scan(scan_id)
+    if not scan:
+        raise HTTPException(404, "Scan not found.")
+    if scan["status"] == "paused":
+        return store.scan_status(scan_id)
+    if scan["status"] not in {"queued", "running"}:
+        raise HTTPException(409, "Only a queued or running scan can be paused.")
+    if not pause_scan(scan_id):
+        raise HTTPException(409, "This scan is no longer active in the current backend process.")
+    return store.scan_status(scan_id)
+
+
+@app.post("/api/scans/{scan_id}/resume")
+async def resume_paused_scan(scan_id: str) -> dict:
+    scan = store.get_scan(scan_id)
+    if not scan:
+        raise HTTPException(404, "Scan not found.")
+    if scan["status"] in {"queued", "running"}:
+        return store.scan_status(scan_id)
+    if scan["status"] != "paused":
+        raise HTTPException(409, "Only a paused scan can be resumed.")
+    if not resume_scan(scan_id):
+        raise HTTPException(
+            409,
+            "This paused scan cannot be resumed because its original backend process is no longer running.",
+        )
+    return store.scan_status(scan_id)
 
 
 @app.get("/api/scans/{scan_id}/pages")

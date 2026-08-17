@@ -14,22 +14,73 @@
   box-shadow: 0 8px 24px #174b2d1c;
 }
 
-.progress-banner div {
+.progress-banner-copy {
   display: grid;
   gap: 2px;
 }
 
-.progress-banner div span {
+.progress-banner-copy span {
   font-size: 13px;
 }
 
-.progress-count {
+.progress-actions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
   margin-left: auto;
+}
+
+.progress-count {
   padding: 7px 10px;
   border-radius: 8px;
   background: #d6efdf;
   font-size: 13px;
   white-space: nowrap;
+}
+
+.progress-banner:not(.paused) .progress-control {
+  min-width: 105px;
+  border: 1px solid #0f5d39;
+  background: #176940;
+  color: #fff;
+  -webkit-text-fill-color: #fff;
+  box-shadow: 0 2px 7px #174b2d16;
+}
+
+.progress-banner:not(.paused) .progress-control:hover,
+.progress-banner:not(.paused) .progress-control:focus-visible {
+  border-color: #093f27;
+  background: #0f5534;
+  color: #fff;
+  -webkit-text-fill-color: #fff;
+}
+
+.progress-banner.paused {
+  border-color: #dfbd73;
+  background: #fff8e8;
+  color: #76510d;
+}
+
+.progress-banner.paused .progress-dot {
+  border-radius: 2px;
+  background: #b87912;
+  box-shadow: 0 0 0 5px #b879121b;
+  animation: none;
+}
+
+.progress-banner.paused .progress-count {
+  background: #f8e9c4;
+}
+
+.progress-banner.paused .progress-control {
+  border-color: #a66d10;
+  background: #a66d10;
+  color: #fff;
+  -webkit-text-fill-color: #fff;
+}
+
+.progress-banner.paused .progress-control:hover {
+  background: #865708;
 }
 
 .progress-dot {
@@ -62,6 +113,11 @@
   }
 
   .progress-count {
+    flex: 1;
+    text-align: center;
+  }
+
+  .progress-actions {
     width: 100%;
     margin-left: 22px;
   }
